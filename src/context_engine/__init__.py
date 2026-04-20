@@ -14,8 +14,17 @@ from .artifacts import (
     RetrievalComposition,
     ScoreBundle,
 )
+from .authoring import (
+    make_candidate_pool,
+    make_context_set,
+    make_corpus_chunk,
+    make_marginal_impact,
+    make_outcome,
+    make_query,
+)
 from .dataset import BenchmarkDataset
 from .io import load_jsonl, write_jsonl
+from .validation import ValidationSummary, validate_jsonl_file
 
 __all__ = [
     "ArtifactValidationError",
@@ -32,5 +41,13 @@ __all__ = [
     "RetrievalComposition",
     "ScoreBundle",
     "load_jsonl",
+    "make_candidate_pool",
+    "make_context_set",
+    "make_corpus_chunk",
+    "make_marginal_impact",
+    "make_outcome",
+    "make_query",
+    "ValidationSummary",
+    "validate_jsonl_file",
     "write_jsonl",
 ]

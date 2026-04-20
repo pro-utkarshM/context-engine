@@ -1,0 +1,1 @@
+{"difficulty": "easy", "gold_answer": "pg_hba.conf controls client authentication rules.", "gold_support_ids": ["pg16_auth_001"], "metadata": {"question_family": "fact_lookup", "requires_multi_hop": false, "topic": "authentication"}, "query": "Which file controls client authentication rules in PostgreSQL?", "query_id": "q_0001", "task_type": "doc_qa"}
