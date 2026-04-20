@@ -22,6 +22,7 @@ from .authoring import (
     make_outcome,
     make_query,
 )
+from .context_sets import DEFAULT_STRATEGIES, GenerationStrategy, generate_context_set, generate_context_sets
 from .dataset import BenchmarkDataset
 from .io import load_jsonl, write_jsonl
 from .validation import ValidationSummary, validate_jsonl_file
@@ -34,6 +35,8 @@ __all__ = [
     "ContextSet",
     "ContextSetMetadata",
     "CorpusChunk",
+    "DEFAULT_STRATEGIES",
+    "GenerationStrategy",
     "MarginalImpact",
     "Outcome",
     "Query",
@@ -47,6 +50,8 @@ __all__ = [
     "make_marginal_impact",
     "make_outcome",
     "make_query",
+    "generate_context_set",
+    "generate_context_sets",
     "ValidationSummary",
     "validate_jsonl_file",
     "write_jsonl",
