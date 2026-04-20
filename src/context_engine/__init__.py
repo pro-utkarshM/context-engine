@@ -24,6 +24,7 @@ from .authoring import (
 )
 from .context_sets import DEFAULT_STRATEGIES, GenerationStrategy, generate_context_set, generate_context_sets
 from .dataset import BenchmarkDataset
+from .evaluation import ScoringWeights, evaluate_context_set, generate_baseline_answer
 from .io import load_jsonl, write_jsonl
 from .validation import ValidationSummary, validate_jsonl_file
 
@@ -52,7 +53,10 @@ __all__ = [
     "make_query",
     "generate_context_set",
     "generate_context_sets",
+    "generate_baseline_answer",
+    "evaluate_context_set",
     "ValidationSummary",
     "validate_jsonl_file",
     "write_jsonl",
+    "ScoringWeights",
 ]
