@@ -1,5 +1,6 @@
 """Core package for the Context Engine benchmark and runtime contracts."""
 
+from .analysis import QueryBestResult, StrategySummary, best_strategy_per_query, render_text_report, summarize_by_strategy
 from .artifacts import (
     ArtifactValidationError,
     CandidatePool,
@@ -41,9 +42,12 @@ __all__ = [
     "MarginalImpact",
     "Outcome",
     "Query",
+    "QueryBestResult",
     "QueryMetadata",
     "RetrievalComposition",
     "ScoreBundle",
+    "StrategySummary",
+    "best_strategy_per_query",
     "load_jsonl",
     "make_candidate_pool",
     "make_context_set",
@@ -51,10 +55,12 @@ __all__ = [
     "make_marginal_impact",
     "make_outcome",
     "make_query",
+    "render_text_report",
     "generate_context_set",
     "generate_context_sets",
     "generate_baseline_answer",
     "evaluate_context_set",
+    "summarize_by_strategy",
     "ValidationSummary",
     "validate_jsonl_file",
     "write_jsonl",
