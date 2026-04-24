@@ -1,6 +1,9 @@
+import json
+from unittest.mock import patch
+
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.model_outcomes import evaluate_with_runner
-from context_engine.runner import StubModelRunner
+from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
 
 
 def test_evaluate_with_runner_uses_model_response() -> None:
@@ -64,3 +67,31 @@ def test_evaluate_with_runner_uses_model_response() -> None:
     assert outcome.answer == "stub_answer"
     assert outcome.scores.correctness == 1.0
     assert outcome.evaluator_version == "eval_v1_model_runner"
+
+
+def test_openai_runner_parses_output_text_response() -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "output_text": "The file is pg_hba.conf.",
+                    "usage": {"input_tokens": 42, "output_tokens": 5},
+                }
+            ).encode("utf-8")
+
+    with patch("context_engine.runner.request.urlopen", return_value=FakeResponse()):
+        runner = OpenAIResponsesRunner(api_key="test-key")
+        response = runner.run(
+            type("Payload", (), {"prompt": "prompt", "estimated_prompt_tokens": 10})(),
+            model_name="gpt-5",
+        )
+
+    assert response.answer == "The file is pg_hba.conf."
+    assert response.prompt_tokens == 42
+    assert response.completion_tokens == 5

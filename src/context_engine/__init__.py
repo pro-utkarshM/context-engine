@@ -29,7 +29,7 @@ from .evaluation import ScoringWeights, evaluate_context_set, generate_baseline_
 from .io import load_jsonl, write_jsonl
 from .model_outcomes import evaluate_with_runner
 from .prompting import PromptPayload, assemble_prompt
-from .runner import ModelResponse, ModelRunner, StubModelRunner
+from .runner import ModelResponse, ModelRunner, OpenAIResponsesRunner, StubModelRunner
 from .validation import ValidationSummary, validate_jsonl_file
 
 __all__ = [
@@ -45,6 +45,7 @@ __all__ = [
     "MarginalImpact",
     "ModelResponse",
     "ModelRunner",
+    "OpenAIResponsesRunner",
     "Outcome",
     "PromptPayload",
     "Query",

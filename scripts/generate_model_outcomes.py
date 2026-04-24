@@ -1,14 +1,33 @@
 from __future__ import annotations
 
 from pathlib import Path
+import argparse
 
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.io import load_jsonl, write_jsonl
 from context_engine.model_outcomes import evaluate_with_runner
-from context_engine.runner import StubModelRunner
+from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="generate_model_outcomes")
+    parser.add_argument("--model", default="gpt-5", help="Model name to send to the runner.")
+    parser.add_argument(
+        "--runner",
+        choices=("stub", "openai"),
+        default="stub",
+        help="Runner backend to use.",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output filename. Defaults to outcomes_model_<runner>_v1.jsonl",
+    )
+    return parser
 
 
 def main() -> int:
+    args = build_parser().parse_args()
     base = Path("data/processed")
     corpus_chunks = [CorpusChunk.from_dict(row) for row in load_jsonl(base / "corpus_chunks_v1.jsonl")]
     queries = [Query.from_dict(row) for row in load_jsonl(base / "queries_v1.jsonl")]
@@ -16,7 +35,7 @@ def main() -> int:
 
     chunks_by_id = {chunk.chunk_id: chunk for chunk in corpus_chunks}
     queries_by_id = {query.query_id: query for query in queries}
-    runner = StubModelRunner()
+    runner = StubModelRunner() if args.runner == "stub" else OpenAIResponsesRunner()
 
     outcomes = [
         evaluate_with_runner(
@@ -24,12 +43,13 @@ def main() -> int:
             context_set=context_set,
             chunks_by_id=chunks_by_id,
             runner=runner,
-            model_name="stub-model",
+            model_name=args.model,
         ).to_dict()
         for context_set in context_sets
     ]
 
-    target = base / "outcomes_model_stub_v1.jsonl"
+    target_name = args.output or f"outcomes_model_{args.runner}_v1.jsonl"
+    target = base / target_name
     write_jsonl(target, outcomes)
     print(target)
     return 0
