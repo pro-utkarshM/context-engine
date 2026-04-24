@@ -119,4 +119,48 @@ def test_generate_baseline_answer_prefers_better_matching_later_chunk() -> None:
             ),
         },
     )
-    assert answer == "After pg_hba.conf checks succeed, the user still needs CONNECT privilege on the target database."
+    assert answer == "The user still needs CONNECT privilege on the target database."
+
+
+def test_generate_baseline_answer_extracts_file_span_from_explanatory_sentence() -> None:
+    answer = generate_baseline_answer(
+        _query(),
+        _context_set(),
+        {
+            "gold_a": _chunk(
+                "gold_a",
+                "PostgreSQL 16 says client authentication is controlled by the pg_hba.conf file in the cluster data directory unless hba_file points elsewhere.",
+                100,
+            )
+        },
+    )
+    assert answer == "The file is pg_hba.conf."
+
+
+def test_generate_baseline_answer_extracts_setting_name() -> None:
+    answer = generate_baseline_answer(
+        Query.from_dict(
+            {
+                "query_id": "q_0005",
+                "query": "What server setting can prevent remote TCP/IP connections even if host rules exist in pg_hba.conf?",
+                "task_type": "doc_qa",
+                "difficulty": "medium",
+                "gold_answer": "The required server setting is listen_addresses.",
+                "gold_support_ids": ["gold_a"],
+                "metadata": {
+                    "topic": "authentication",
+                    "requires_multi_hop": False,
+                    "question_family": "troubleshooting",
+                },
+            }
+        ),
+        _context_set(),
+        {
+            "gold_a": _chunk(
+                "gold_a",
+                "Remote TCP/IP access also depends on listen_addresses, because the default server behavior only listens on the loopback address localhost.",
+                100,
+            )
+        },
+    )
+    assert answer == "The required server setting is listen_addresses."

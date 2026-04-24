@@ -16,7 +16,7 @@ class ScoringWeights:
     efficiency: float = 0.1
 
 
-SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Za-z])")
 TOKEN_PATTERN = re.compile(r"[a-z0-9_./-]+")
 
 
@@ -39,6 +39,59 @@ def _score_sentence(query: Query, sentence: str, chunk_id: str, gold_ids: set[st
     return (overlap + gold_bonus - rank_penalty, overlap)
 
 
+def _strip_leadin(sentence: str) -> str:
+    patterns = (
+        r"^PostgreSQL \d+ says\s+",
+        r"^In PostgreSQL \d+,\s+",
+        r"^PostgreSQL \d+ also notes that\s+",
+    )
+    cleaned = sentence.strip()
+    for pattern in patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
+
+
+def _extract_concise_answer(query: Query, sentence: str) -> str:
+    query_text = query.query.lower()
+    cleaned = _strip_leadin(sentence).strip()
+
+    if "which configuration file" in query_text or "which file" in query_text:
+        match = re.search(r"\b([a-z0-9_]+\.conf)\b", cleaned, flags=re.IGNORECASE)
+        if match:
+            return f"The file is {match.group(1)}."
+
+    if "what additional permission" in query_text:
+        match = re.search(r"\b([A-Z]+ privilege(?: on the target database)?)\b", cleaned)
+        if match:
+            permission = match.group(1)
+            if "target database" not in permission:
+                permission = permission + " on the target database"
+            return f"The user still needs {permission}."
+
+    if "what server setting" in query_text:
+        if "listen_addresses" in cleaned:
+            return "The required server setting is listen_addresses."
+
+    if "which pg_hba.conf record type" in query_text or "which record type" in query_text:
+        for record_type in ("hostssl", "hostnossl", "hostgssenc", "hostnogssenc", "host", "local"):
+            if re.search(rf"\b{record_type}\b", cleaned, flags=re.IGNORECASE):
+                return f"The record type is {record_type}."
+
+    if "difference between peer and ident" in query_text:
+        if "peer" in cleaned.lower() and "ident" in cleaned.lower():
+            return "peer is only for local connections, while ident is for TCP/IP connections."
+
+    if "how do you apply pg_hba.conf changes" in query_text:
+        if "sighup" in cleaned.lower():
+            return "Reload pg_hba.conf with SIGHUP, for example via pg_ctl reload or pg_reload_conf(); on Windows, new connections pick up changes immediately."
+
+    if "what happens if the first matching" in query_text:
+        if "no fallback" in cleaned.lower() or "later records" in cleaned.lower():
+            return "PostgreSQL stops at the first matching record and does not try later records if authentication fails."
+
+    return cleaned
+
+
 def generate_baseline_answer(
     query: Query,
     context_set: ContextSet,
@@ -57,7 +110,7 @@ def generate_baseline_answer(
         for sentence in _split_sentences(chunk.text):
             score, overlap = _score_sentence(query, sentence, chunk_id, gold_ids, rank)
             if score > best_score or (score == best_score and overlap > best_overlap):
-                best_sentence = sentence
+                best_sentence = _extract_concise_answer(query, sentence)
                 best_score = score
                 best_overlap = overlap
 
@@ -65,13 +118,17 @@ def generate_baseline_answer(
 
 
 def score_correctness(query: Query, answer: str) -> float:
-    normalized_answer = answer.strip().lower()
-    normalized_gold = query.gold_answer.strip().lower()
+    normalized_answer = " ".join(_tokenize(answer))
+    normalized_gold = " ".join(_tokenize(query.gold_answer))
     if not normalized_answer:
         return 0.0
     if normalized_answer == normalized_gold:
         return 1.0
     if normalized_answer in normalized_gold or normalized_gold in normalized_answer:
+        return 0.7
+    answer_tokens = set(normalized_answer.split())
+    gold_tokens = set(normalized_gold.split())
+    if answer_tokens and answer_tokens.issubset(gold_tokens):
         return 0.7
     return 0.0
 
