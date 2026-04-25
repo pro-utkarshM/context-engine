@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 import argparse
+import os
+from pathlib import Path
 
+from context_engine.env import load_dotenv
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.io import load_jsonl, write_jsonl
 from context_engine.model_outcomes import evaluate_with_runner
@@ -11,7 +13,7 @@ from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="generate_model_outcomes")
-    parser.add_argument("--model", default="gpt-5", help="Model name to send to the runner.")
+    parser.add_argument("--model", default=None, help="Model name to send to the runner.")
     parser.add_argument(
         "--runner",
         choices=("stub", "openai"),
@@ -27,7 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    load_dotenv()
     args = build_parser().parse_args()
+    model_name = args.model or os.environ.get("OPENAI_MODEL", "gpt-5")
     base = Path("data/processed")
     corpus_chunks = [CorpusChunk.from_dict(row) for row in load_jsonl(base / "corpus_chunks_v1.jsonl")]
     queries = [Query.from_dict(row) for row in load_jsonl(base / "queries_v1.jsonl")]
@@ -43,7 +47,7 @@ def main() -> int:
             context_set=context_set,
             chunks_by_id=chunks_by_id,
             runner=runner,
-            model_name=args.model,
+            model_name=model_name,
         ).to_dict()
         for context_set in context_sets
     ]

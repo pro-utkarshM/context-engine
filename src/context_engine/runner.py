@@ -52,6 +52,9 @@ class OpenAIResponsesRunner:
     def __post_init__(self) -> None:
         if self.api_key is None:
             self.api_key = os.environ.get("OPENAI_API_KEY")
+        env_base_url = os.environ.get("OPENAI_BASE_URL")
+        if env_base_url:
+            self.base_url = env_base_url
 
     def run(self, payload: PromptPayload, *, model_name: str) -> ModelResponse:
         if not self.api_key:

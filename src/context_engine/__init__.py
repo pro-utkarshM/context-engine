@@ -25,6 +25,7 @@ from .authoring import (
 )
 from .context_sets import DEFAULT_STRATEGIES, GenerationStrategy, generate_context_set, generate_context_sets
 from .dataset import BenchmarkDataset
+from .env import load_dotenv
 from .evaluation import ScoringWeights, evaluate_context_set, generate_baseline_answer
 from .io import load_jsonl, write_jsonl
 from .model_outcomes import evaluate_with_runner
@@ -58,6 +59,7 @@ __all__ = [
     "assemble_prompt",
     "best_strategy_per_query",
     "evaluate_with_runner",
+    "load_dotenv",
     "load_jsonl",
     "make_candidate_pool",
     "make_context_set",
