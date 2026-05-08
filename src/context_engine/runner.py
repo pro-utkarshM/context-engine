@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
+import time
 from typing import Protocol
 from urllib import error, request
 
@@ -48,6 +50,8 @@ class OpenAIResponsesRunner:
     api_key: str | None = None
     base_url: str = "https://api.openai.com/v1"
     timeout_seconds: float = 60.0
+    max_retries: int = 5
+    min_retry_delay_seconds: float = 1.0
 
     def __post_init__(self) -> None:
         if self.api_key is None:
@@ -75,14 +79,7 @@ class OpenAIResponsesRunner:
             method="POST",
         )
 
-        try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
-                response_body = response.read().decode("utf-8")
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"OpenAI API request failed with status {exc.code}: {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"OpenAI API request failed: {exc.reason}") from exc
+        response_body = self._execute_with_retries(req)
 
         payload_json = json.loads(response_body)
         answer = _extract_output_text(payload_json)
@@ -96,6 +93,48 @@ class OpenAIResponsesRunner:
             completion_tokens=completion_tokens,
             latency_ms=0,
         )
+
+    def _execute_with_retries(self, req: request.Request) -> str:
+        attempt = 0
+        while True:
+            try:
+                with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                    return response.read().decode("utf-8")
+            except error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 429 and attempt < self.max_retries:
+                    delay = _retry_delay_seconds(
+                        detail,
+                        getattr(exc, "headers", None).get("Retry-After") if getattr(exc, "headers", None) else None,
+                        attempt=attempt,
+                        minimum_delay=self.min_retry_delay_seconds,
+                    )
+                    time.sleep(delay)
+                    attempt += 1
+                    continue
+                raise RuntimeError(f"OpenAI API request failed with status {exc.code}: {detail}") from exc
+            except error.URLError as exc:
+                raise RuntimeError(f"OpenAI API request failed: {exc.reason}") from exc
+
+
+def _retry_delay_seconds(
+    response_body: str,
+    retry_after_header: str | None,
+    *,
+    attempt: int,
+    minimum_delay: float,
+) -> float:
+    if retry_after_header:
+        try:
+            return max(float(retry_after_header), minimum_delay)
+        except ValueError:
+            pass
+
+    match = re.search(r"try again in\s+(\d+)s", response_body, flags=re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)), minimum_delay)
+
+    return max(minimum_delay * (2 ** attempt), minimum_delay)
 
 
 def _extract_output_text(payload_json: dict) -> str:

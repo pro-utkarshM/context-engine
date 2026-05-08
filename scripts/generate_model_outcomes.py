@@ -25,7 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional output filename. Defaults to outcomes_model_<runner>_v1.jsonl",
     )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Disable resume behavior and regenerate all outcomes from scratch.",
+    )
     return parser
+
+
+def _load_existing_outcomes(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return load_jsonl(path)
 
 
 def main() -> int:
@@ -41,19 +52,31 @@ def main() -> int:
     queries_by_id = {query.query_id: query for query in queries}
     runner = StubModelRunner() if args.runner == "stub" else OpenAIResponsesRunner()
 
-    outcomes = [
-        evaluate_with_runner(
+    target_name = args.output or f"outcomes_model_{args.runner}_v1.jsonl"
+    target = base / target_name
+    existing_rows = [] if args.no_resume else _load_existing_outcomes(target)
+    completed_set_ids = {row["set_id"] for row in existing_rows}
+    outcomes = list(existing_rows)
+
+    pending_context_sets = [
+        context_set for context_set in context_sets if context_set.set_id not in completed_set_ids
+    ]
+
+    for index, context_set in enumerate(pending_context_sets, start=1):
+        outcome = evaluate_with_runner(
             query=queries_by_id[context_set.query_id],
             context_set=context_set,
             chunks_by_id=chunks_by_id,
             runner=runner,
             model_name=model_name,
         ).to_dict()
-        for context_set in context_sets
-    ]
+        outcomes.append(outcome)
+        write_jsonl(target, outcomes)
+        print(
+            f"[{index}/{len(pending_context_sets)}] wrote {context_set.set_id} -> {target}",
+            flush=True,
+        )
 
-    target_name = args.output or f"outcomes_model_{args.runner}_v1.jsonl"
-    target = base / target_name
     write_jsonl(target, outcomes)
     print(target)
     return 0

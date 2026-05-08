@@ -72,4 +72,6 @@ def test_assemble_prompt_includes_query_and_ordered_chunks() -> None:
     assert "Question:" in payload.prompt
     assert "Chunk one text." in payload.prompt
     assert "Chunk two text." in payload.prompt
+    assert "Return exactly one short answer line." in payload.prompt
+    assert "INSUFFICIENT_CONTEXT" in payload.prompt
     assert payload.estimated_prompt_tokens == 123

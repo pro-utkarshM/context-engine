@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.model_outcomes import evaluate_with_runner
-from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
+from context_engine.runner import OpenAIResponsesRunner, StubModelRunner, _retry_delay_seconds
 
 
 def test_evaluate_with_runner_uses_model_response() -> None:
@@ -95,3 +95,18 @@ def test_openai_runner_parses_output_text_response() -> None:
     assert response.answer == "The file is pg_hba.conf."
     assert response.prompt_tokens == 42
     assert response.completion_tokens == 5
+
+
+def test_retry_delay_uses_retry_after_header() -> None:
+    delay = _retry_delay_seconds("{}", "7", attempt=0, minimum_delay=1.0)
+    assert delay == 7.0
+
+
+def test_retry_delay_parses_body_hint() -> None:
+    delay = _retry_delay_seconds(
+        "Please try again in 20s.",
+        None,
+        attempt=0,
+        minimum_delay=1.0,
+    )
+    assert delay == 20.0

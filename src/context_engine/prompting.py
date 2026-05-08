@@ -27,9 +27,14 @@ def assemble_prompt(
         chunk_blocks.append(f"[Chunk {rank} | {chunk.chunk_id} | v{chunk.doc_version}]\n{chunk.text}")
 
     prompt = (
-        "You are answering a technical documentation question.\n"
+        "You are answering a technical documentation benchmark question.\n"
         "Use only the provided context.\n"
-        "Return a concise answer.\n\n"
+        "Return exactly one short answer line.\n"
+        "Do not explain your reasoning.\n"
+        "Do not add background, caveats, or extra sentences.\n"
+        "If the answer is a file name, setting name, method name, record type, or privilege, return that exact term.\n"
+        "Prefer exact wording from the context when possible.\n"
+        "If the context is insufficient, return exactly: INSUFFICIENT_CONTEXT\n\n"
         f"Question:\n{query.query}\n\n"
         f"Context:\n{'\n\n'.join(chunk_blocks)}\n"
     )
