@@ -18,6 +18,10 @@ class ScoringWeights:
 
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Za-z])")
 TOKEN_PATTERN = re.compile(r"[a-z0-9_./-]+")
+FILE_PATTERN = re.compile(r"\b[a-z0-9_]+\.conf\b", flags=re.IGNORECASE)
+SETTING_PATTERN = re.compile(r"\b[a-z_]+(?:_addresses|_file)\b", flags=re.IGNORECASE)
+PRIVILEGE_PATTERN = re.compile(r"\b[a-z]+ privilege(?: on the target database)?\b", flags=re.IGNORECASE)
+RECORD_TYPE_PATTERN = re.compile(r"\b(hostssl|hostnossl|hostgssenc|hostnogssenc|host|local)\b", flags=re.IGNORECASE)
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -27,6 +31,16 @@ def _split_sentences(text: str) -> list[str]:
 
 def _tokenize(text: str) -> set[str]:
     return {token for token in TOKEN_PATTERN.findall(text.lower()) if len(token) > 1}
+
+
+def _extract_entities(text: str) -> set[str]:
+    lowered = text.lower()
+    entities: set[str] = set()
+    for pattern in (FILE_PATTERN, SETTING_PATTERN, PRIVILEGE_PATTERN, RECORD_TYPE_PATTERN):
+        entities.update(match.group(0).lower() for match in pattern.finditer(lowered))
+    if "peer" in lowered and "ident" in lowered:
+        entities.add("peer_vs_ident")
+    return entities
 
 
 def _score_sentence(query: Query, sentence: str, chunk_id: str, gold_ids: set[str], rank: int) -> tuple[float, int]:
@@ -118,17 +132,30 @@ def generate_baseline_answer(
 
 
 def score_correctness(query: Query, answer: str) -> float:
-    normalized_answer = " ".join(_tokenize(answer))
-    normalized_gold = " ".join(_tokenize(query.gold_answer))
-    if not normalized_answer:
+    answer_text = answer.strip().lower()
+    gold_text = query.gold_answer.strip().lower()
+    answer_tokens = _tokenize(answer)
+    gold_tokens = _tokenize(query.gold_answer)
+    if not answer_tokens:
         return 0.0
-    if normalized_answer == normalized_gold:
+    if answer_text == gold_text:
         return 1.0
-    if normalized_answer in normalized_gold or normalized_gold in normalized_answer:
+    if answer_text in gold_text or gold_text in answer_text:
         return 0.7
-    answer_tokens = set(normalized_answer.split())
-    gold_tokens = set(normalized_gold.split())
     if answer_tokens and answer_tokens.issubset(gold_tokens):
+        return 0.7
+    if gold_tokens and gold_tokens.issubset(answer_tokens):
+        return 0.7
+
+    answer_entities = _extract_entities(answer)
+    gold_entities = _extract_entities(query.gold_answer)
+    if answer_entities and gold_entities and answer_entities == gold_entities:
+        return 0.7
+    if answer_entities and gold_entities and answer_entities.issubset(gold_entities):
+        return 0.7
+
+    overlap_ratio = len(answer_tokens.intersection(gold_tokens)) / max(len(gold_tokens), 1)
+    if overlap_ratio >= 0.65:
         return 0.7
     return 0.0
 

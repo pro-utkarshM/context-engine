@@ -3,7 +3,12 @@ from unittest.mock import patch
 
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.model_outcomes import evaluate_with_runner
-from context_engine.runner import OpenAIResponsesRunner, StubModelRunner, _retry_delay_seconds
+from context_engine.runner import (
+    OpenAIResponsesRunner,
+    StubModelRunner,
+    _parse_wait_hint_seconds,
+    _retry_delay_seconds,
+)
 
 
 def test_evaluate_with_runner_uses_model_response() -> None:
@@ -110,3 +115,7 @@ def test_retry_delay_parses_body_hint() -> None:
         minimum_delay=1.0,
     )
     assert delay == 20.0
+
+
+def test_parse_wait_hint_supports_minutes_and_seconds() -> None:
+    assert _parse_wait_hint_seconds("Please try again in 7m12s.") == 432.0

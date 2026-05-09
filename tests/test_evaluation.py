@@ -1,5 +1,5 @@
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
-from context_engine.evaluation import evaluate_context_set, generate_baseline_answer
+from context_engine.evaluation import evaluate_context_set, generate_baseline_answer, score_correctness
 
 
 def _chunk(chunk_id: str, text: str, token_count: int) -> CorpusChunk:
@@ -164,3 +164,65 @@ def test_generate_baseline_answer_extracts_setting_name() -> None:
         },
     )
     assert answer == "The required server setting is listen_addresses."
+
+
+def test_score_correctness_accepts_exact_file_span() -> None:
+    assert score_correctness(_query(), "pg_hba.conf") == 0.7
+
+
+def test_score_correctness_accepts_exact_setting_span() -> None:
+    query = Query.from_dict(
+        {
+            "query_id": "q_0005",
+            "query": "What server setting can prevent remote TCP/IP connections even if host rules exist in pg_hba.conf?",
+            "task_type": "doc_qa",
+            "difficulty": "medium",
+            "gold_answer": "Remote TCP/IP connections require an appropriate listen_addresses setting, because the default server behavior listens only on localhost.",
+            "gold_support_ids": ["gold_a"],
+            "metadata": {
+                "topic": "authentication",
+                "requires_multi_hop": False,
+                "question_family": "troubleshooting",
+            },
+        }
+    )
+    assert score_correctness(query, "listen_addresses") == 0.7
+
+
+def test_score_correctness_accepts_privilege_span() -> None:
+    query = Query.from_dict(
+        {
+            "query_id": "q_0010",
+            "query": "What additional permission is required after pg_hba.conf checks succeed?",
+            "task_type": "doc_qa",
+            "difficulty": "medium",
+            "gold_answer": "Even after a connection passes pg_hba.conf checks, the user still needs CONNECT privilege on the target database.",
+            "gold_support_ids": ["gold_a"],
+            "metadata": {
+                "topic": "authentication",
+                "requires_multi_hop": False,
+                "question_family": "troubleshooting",
+            },
+        }
+    )
+    assert score_correctness(query, "CONNECT privilege on the target database") == 0.7
+
+
+def test_score_correctness_accepts_peer_ident_paraphrase() -> None:
+    query = Query.from_dict(
+        {
+            "query_id": "q_0008",
+            "query": "What is the difference between peer and ident authentication for local versus TCP/IP connections?",
+            "task_type": "doc_qa",
+            "difficulty": "medium",
+            "gold_answer": "peer is only for local connections, while ident is for TCP/IP and if ident is specified for a local connection PostgreSQL uses peer instead.",
+            "gold_support_ids": ["gold_a"],
+            "metadata": {
+                "topic": "authentication",
+                "requires_multi_hop": False,
+                "question_family": "comparison",
+            },
+        }
+    )
+    answer = "peer is available only for local connections; ident is only for TCP/IP and if ident is specified for a local connection PostgreSQL uses peer."
+    assert score_correctness(query, answer) == 0.7

@@ -130,11 +130,27 @@ def _retry_delay_seconds(
         except ValueError:
             pass
 
-    match = re.search(r"try again in\s+(\d+)s", response_body, flags=re.IGNORECASE)
-    if match:
-        return max(float(match.group(1)), minimum_delay)
+    delay = _parse_wait_hint_seconds(response_body)
+    if delay is not None:
+        return max(delay, minimum_delay)
 
     return max(minimum_delay * (2 ** attempt), minimum_delay)
+
+
+def _parse_wait_hint_seconds(text: str) -> float | None:
+    match = re.search(
+        r"try again in\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    total = hours * 3600 + minutes * 60 + seconds
+    return float(total) if total > 0 else None
 
 
 def _extract_output_text(payload_json: dict) -> str:

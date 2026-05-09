@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 from context_engine.env import load_dotenv
@@ -54,6 +55,11 @@ def main() -> int:
 
     target_name = args.output or f"outcomes_model_{args.runner}_v1.jsonl"
     target = base / target_name
+    if args.no_resume and target.exists():
+        print(
+            f"warning: --no-resume will restart from scratch and overwrite progress in {target}",
+            file=sys.stderr,
+        )
     existing_rows = [] if args.no_resume else _load_existing_outcomes(target)
     completed_set_ids = {row["set_id"] for row in existing_rows}
     outcomes = list(existing_rows)
