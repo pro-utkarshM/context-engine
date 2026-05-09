@@ -51,6 +51,12 @@ def _pool() -> CandidatePool:
                 "neutral_count": 0,
             },
             "gold_in_pool": True,
+            "candidate_metadata": {
+                "gold_a": {"role": "gold"},
+                "gold_b": {"role": "gold"},
+                "d1": {"role": "distractor", "distractor_type": "stale"},
+                "d2": {"role": "distractor", "distractor_type": "topical_wrong"},
+            },
         }
     )
 
@@ -85,7 +91,7 @@ def test_gold_plus_distractors_marks_unknown_distractors() -> None:
         strategy=type("Strategy", (), {"name": "gold_plus_distractors", "ordering_type": "best_first"})(),
     )
     assert context_set.selected_ids == ["gold_a", "gold_b", "d1", "d2"]
-    assert context_set.metadata.distractor_types == ["unknown", "unknown"]
+    assert context_set.metadata.distractor_types == ["stale", "topical_wrong"]
 
 
 def test_minimal_support_can_miss_gold_chunks() -> None:

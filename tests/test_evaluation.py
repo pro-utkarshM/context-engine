@@ -226,3 +226,43 @@ def test_score_correctness_accepts_peer_ident_paraphrase() -> None:
     )
     answer = "peer is available only for local connections; ident is only for TCP/IP and if ident is specified for a local connection PostgreSQL uses peer."
     assert score_correctness(query, answer) == 0.7
+
+
+def test_score_correctness_accepts_regex_expression_answer() -> None:
+    query = Query.from_dict(
+        {
+            "query_id": "q_0006",
+            "query": "How do you express regular-expression matches for database or user names in PostgreSQL 16 pg_hba.conf entries?",
+            "task_type": "doc_qa",
+            "difficulty": "hard",
+            "gold_answer": "In PostgreSQL 16, slash-prefixed values in the database or user field are treated as regular expressions, and multiple names or regexes can be comma-separated or loaded from an at-sign file.",
+            "gold_support_ids": ["gold_a"],
+            "metadata": {
+                "topic": "authentication",
+                "requires_multi_hop": False,
+                "question_family": "comparison",
+            },
+        }
+    )
+    answer = "Prefix the database or user value with a slash (/) to treat it as a regular expression."
+    assert score_correctness(query, answer) == 0.7
+
+
+def test_score_correctness_accepts_reload_procedure_answer() -> None:
+    query = Query.from_dict(
+        {
+            "query_id": "q_0009",
+            "query": "How do you apply pg_hba.conf changes on an active system, and what is the Windows-specific exception?",
+            "task_type": "doc_qa",
+            "difficulty": "hard",
+            "gold_answer": "On most systems you reload pg_hba.conf with SIGHUP, for example via pg_ctl reload or pg_reload_conf(); on Windows, new connections pick up changes immediately.",
+            "gold_support_ids": ["gold_a"],
+            "metadata": {
+                "topic": "authentication",
+                "requires_multi_hop": False,
+                "question_family": "procedural",
+            },
+        }
+    )
+    answer = "Send SIGHUP, for example with pg_ctl reload or pg_reload_conf(); on Windows, new connections see changes immediately."
+    assert score_correctness(query, answer) == 0.7

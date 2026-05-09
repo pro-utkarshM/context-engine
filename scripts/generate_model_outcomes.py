@@ -31,6 +31,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable resume behavior and regenerate all outcomes from scratch.",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N pending context sets after filtering/resume.",
+    )
+    parser.add_argument(
+        "--query-id",
+        action="append",
+        default=None,
+        help="Restrict execution to one or more query IDs. Can be passed multiple times.",
+    )
+    parser.add_argument(
+        "--set-id",
+        action="append",
+        default=None,
+        help="Restrict execution to one or more exact context set IDs. Can be passed multiple times.",
+    )
+    parser.add_argument(
+        "--start-at",
+        default=None,
+        help="Skip pending sets until this set_id is reached, then continue from there.",
+    )
     return parser
 
 
@@ -38,6 +61,33 @@ def _load_existing_outcomes(path: Path) -> list[dict]:
     if not path.exists():
         return []
     return load_jsonl(path)
+
+
+def _filter_context_sets(
+    context_sets: list[ContextSet],
+    *,
+    query_ids: set[str] | None,
+    set_ids: set[str] | None,
+    start_at: str | None,
+    limit: int | None,
+) -> list[ContextSet]:
+    filtered = context_sets
+    if query_ids:
+        filtered = [context_set for context_set in filtered if context_set.query_id in query_ids]
+    if set_ids:
+        filtered = [context_set for context_set in filtered if context_set.set_id in set_ids]
+    if start_at:
+        seen = False
+        resumed: list[ContextSet] = []
+        for context_set in filtered:
+            if context_set.set_id == start_at:
+                seen = True
+            if seen:
+                resumed.append(context_set)
+        filtered = resumed
+    if limit is not None:
+        filtered = filtered[:limit]
+    return filtered
 
 
 def main() -> int:
@@ -67,6 +117,19 @@ def main() -> int:
     pending_context_sets = [
         context_set for context_set in context_sets if context_set.set_id not in completed_set_ids
     ]
+    pending_context_sets = _filter_context_sets(
+        pending_context_sets,
+        query_ids=set(args.query_id) if args.query_id else None,
+        set_ids=set(args.set_id) if args.set_id else None,
+        start_at=args.start_at,
+        limit=args.limit,
+    )
+
+    print(
+        f"pending {len(pending_context_sets)} context sets "
+        f"(existing={len(existing_rows)}, runner={args.runner}, model={model_name})",
+        flush=True,
+    )
 
     for index, context_set in enumerate(pending_context_sets, start=1):
         outcome = evaluate_with_runner(

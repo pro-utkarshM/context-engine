@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import os
 import re
+import sys
 import time
 from typing import Protocol
 from urllib import error, request
@@ -108,6 +109,11 @@ class OpenAIResponsesRunner:
                         getattr(exc, "headers", None).get("Retry-After") if getattr(exc, "headers", None) else None,
                         attempt=attempt,
                         minimum_delay=self.min_retry_delay_seconds,
+                    )
+                    print(
+                        f"rate limited; retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries})",
+                        file=sys.stderr,
+                        flush=True,
                     )
                     time.sleep(delay)
                     attempt += 1
