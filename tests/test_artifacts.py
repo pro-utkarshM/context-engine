@@ -57,6 +57,10 @@ def test_candidate_pool_round_trip() -> None:
             "neutral_count": 3,
         },
         "gold_in_pool": True,
+        "candidate_metadata": {
+            "pg16_auth_001": {"role": "gold"},
+            "pg15_auth_003": {"role": "distractor", "distractor_type": "stale"},
+        },
     }
     artifact = CandidatePool.from_dict(row)
     assert artifact.to_dict() == row

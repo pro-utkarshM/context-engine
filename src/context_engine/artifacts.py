@@ -191,16 +191,21 @@ class CandidatePool:
     candidate_ids: list[str]
     composition: RetrievalComposition
     gold_in_pool: bool
+    candidate_metadata: dict[str, dict[str, Any]] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "CandidatePool":
         data = _require_object(payload, "candidate_pool")
+        candidate_metadata = data.get("candidate_metadata")
+        if candidate_metadata is not None:
+            candidate_metadata = _require_object(candidate_metadata, "candidate_metadata")
         return cls(
             query_id=_require_str(data.get("query_id"), "query_id"),
             candidate_pool_id=_require_str(data.get("candidate_pool_id"), "candidate_pool_id"),
             candidate_ids=_require_list_of_str(data.get("candidate_ids"), "candidate_ids"),
             composition=RetrievalComposition.from_dict(data.get("composition")),
             gold_in_pool=_require_bool(data.get("gold_in_pool"), "gold_in_pool"),
+            candidate_metadata=candidate_metadata,
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -33,7 +33,30 @@ def _gold_ids(query: Query) -> list[str]:
 
 def _pool_distractor_ids(candidate_pool: CandidatePool, query: Query) -> list[str]:
     gold_ids = set(_gold_ids(query))
-    return [chunk_id for chunk_id in candidate_pool.candidate_ids if chunk_id not in gold_ids]
+    distractor_ids = [chunk_id for chunk_id in candidate_pool.candidate_ids if chunk_id not in gold_ids]
+    if not candidate_pool.candidate_metadata:
+        return distractor_ids
+
+    typed = [
+        chunk_id
+        for chunk_id in distractor_ids
+        if candidate_pool.candidate_metadata.get(chunk_id, {}).get("role") == "distractor"
+    ]
+    untyped = [chunk_id for chunk_id in distractor_ids if chunk_id not in typed]
+    return typed + untyped
+
+
+def _selected_distractor_types(candidate_pool: CandidatePool, selected_ids: list[str], gold_ids: set[str]) -> list[str]:
+    if not candidate_pool.candidate_metadata:
+        return ["unknown" for chunk_id in selected_ids if chunk_id not in gold_ids]
+
+    distractor_types: list[str] = []
+    for chunk_id in selected_ids:
+        if chunk_id in gold_ids:
+            continue
+        metadata = candidate_pool.candidate_metadata.get(chunk_id, {})
+        distractor_types.append(str(metadata.get("distractor_type", "unknown")))
+    return distractor_types
 
 
 def _strategy_selected_ids(strategy_name: str, candidate_pool: CandidatePool, query: Query) -> list[str]:
@@ -63,8 +86,7 @@ def generate_context_set(
     selected_ids = _strategy_selected_ids(strategy.name, candidate_pool, query)
     gold_ids = set(_gold_ids(query))
     missing_gold_count = len(gold_ids.difference(selected_ids))
-    distractor_ids = [chunk_id for chunk_id in selected_ids if chunk_id not in gold_ids]
-    distractor_types = ["unknown" for _ in distractor_ids]
+    distractor_types = _selected_distractor_types(candidate_pool, selected_ids, gold_ids)
 
     return make_context_set(
         set_id=f"{query.query_id}_{strategy.name}",
