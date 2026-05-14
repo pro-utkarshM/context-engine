@@ -1,0 +1,15 @@
+{
+  "experiment_name": "pg_v1_baseline_strategies",
+  "model_name": "gpt-5",
+  "selector_strategy": "default",
+  "evaluator_version": "eval_v1_model_runner",
+  "dataset_dir": "data/processed",
+  "artifact_version": "v1",
+  "token_budget": 1500,
+  "scoring_weights": {
+    "correctness": 0.6,
+    "support": 0.3,
+    "efficiency": 0.1
+  },
+  "seed": 1337
+}
