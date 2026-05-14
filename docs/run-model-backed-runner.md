@@ -47,12 +47,18 @@ Notes:
 - `OPENAI_MODEL` is optional. If omitted, the script defaults to `gpt-5`.
 - `OPENAI_BASE_URL` is optional unless you need a custom OpenAI-compatible endpoint.
 
+## Config-Driven Runs
+
+All scripts accept `--config <path>` (JSON experiment config; see `docs/experiment-config-format.md`) plus `--dataset-dir` and `--artifact-version` overrides. The config controls input paths, the default model name, scoring weights, evaluator version, and token budget.
+
+The default experiment config lives at `configs/experiment_v1_baseline.json`.
+
 ## Run The Stub Runner
 
 This path does not call the network. It is useful for testing the model-backed pipeline shape.
 
 ```bash
-PYTHONPATH=src python scripts/generate_model_outcomes.py --runner stub
+PYTHONPATH=src python scripts/generate_model_outcomes.py --config configs/experiment_v1_baseline.json --runner stub
 ```
 
 Output:
@@ -72,13 +78,13 @@ PYTHONPATH=src python -m context_engine.cli data/processed/outcomes_model_stub_v
 This path calls the OpenAI Responses API.
 
 ```bash
-PYTHONPATH=src python scripts/generate_model_outcomes.py --runner openai
+PYTHONPATH=src python scripts/generate_model_outcomes.py --config configs/experiment_v1_baseline.json --runner openai
 ```
 
-If you want to override the model explicitly:
+If you want to override the model explicitly (the `--model` flag wins over `OPENAI_MODEL` env and `config.model_name`):
 
 ```bash
-PYTHONPATH=src python scripts/generate_model_outcomes.py --runner openai --model gpt-5
+PYTHONPATH=src python scripts/generate_model_outcomes.py --config configs/experiment_v1_baseline.json --runner openai --model gpt-5
 ```
 
 Output:

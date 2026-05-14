@@ -7,6 +7,7 @@ from pathlib import Path
 
 from context_engine.env import load_dotenv
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
+from context_engine.config import add_config_args, config_from_args, resolved_artifact_path
 from context_engine.io import load_jsonl, write_jsonl
 from context_engine.model_outcomes import evaluate_with_runner
 from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
@@ -14,7 +15,8 @@ from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="generate_model_outcomes")
-    parser.add_argument("--model", default=None, help="Model name to send to the runner.")
+    add_config_args(parser)
+    parser.add_argument("--model", default=None, help="Model name to send to the runner. Overrides config.model_name.")
     parser.add_argument(
         "--runner",
         choices=("stub", "openai"),
@@ -22,9 +24,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Runner backend to use.",
     )
     parser.add_argument(
+        "--context-sets",
+        default=None,
+        help="Optional explicit input context-sets filename (under dataset_dir).",
+    )
+    parser.add_argument(
         "--output",
         default=None,
-        help="Optional output filename. Defaults to outcomes_model_<runner>_v1.jsonl",
+        help="Optional explicit output path. Defaults to outcomes_model_<runner>_<version>.jsonl under dataset_dir.",
     )
     parser.add_argument(
         "--no-resume",
@@ -93,18 +100,32 @@ def _filter_context_sets(
 def main() -> int:
     load_dotenv()
     args = build_parser().parse_args()
-    model_name = args.model or os.environ.get("OPENAI_MODEL", "gpt-5")
-    base = Path("data/processed")
-    corpus_chunks = [CorpusChunk.from_dict(row) for row in load_jsonl(base / "corpus_chunks_v1.jsonl")]
-    queries = [Query.from_dict(row) for row in load_jsonl(base / "queries_v1.jsonl")]
-    context_sets = [ContextSet.from_dict(row) for row in load_jsonl(base / "context_sets_v1.jsonl")]
+    config = config_from_args(args)
+    model_name = args.model or os.environ.get("OPENAI_MODEL") or config.model_name
+
+    corpus_chunks = [
+        CorpusChunk.from_dict(row)
+        for row in load_jsonl(resolved_artifact_path(config, "corpus_chunks"))
+    ]
+    queries = [
+        Query.from_dict(row)
+        for row in load_jsonl(resolved_artifact_path(config, "queries"))
+    ]
+    context_sets_path = (
+        config.dataset_dir / args.context_sets
+        if args.context_sets
+        else resolved_artifact_path(config, "context_sets")
+    )
+    context_sets = [ContextSet.from_dict(row) for row in load_jsonl(context_sets_path)]
 
     chunks_by_id = {chunk.chunk_id: chunk for chunk in corpus_chunks}
     queries_by_id = {query.query_id: query for query in queries}
     runner = StubModelRunner() if args.runner == "stub" else OpenAIResponsesRunner()
 
-    target_name = args.output or f"outcomes_model_{args.runner}_v1.jsonl"
-    target = base / target_name
+    if args.output:
+        target = Path(args.output)
+    else:
+        target = resolved_artifact_path(config, f"outcomes_model_{args.runner}")
     if args.no_resume and target.exists():
         print(
             f"warning: --no-resume will restart from scratch and overwrite progress in {target}",
@@ -138,6 +159,9 @@ def main() -> int:
             chunks_by_id=chunks_by_id,
             runner=runner,
             model_name=model_name,
+            weights=config.scoring_weights,
+            evaluator_version=config.evaluator_version,
+            max_token_budget=config.token_budget,
         ).to_dict()
         outcomes.append(outcome)
         write_jsonl(target, outcomes)
