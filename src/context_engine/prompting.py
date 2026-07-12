@@ -26,6 +26,7 @@ def assemble_prompt(
         chunk = chunks_by_id[chunk_id]
         chunk_blocks.append(f"[Chunk {rank} | {chunk.chunk_id} | v{chunk.doc_version}]\n{chunk.text}")
 
+    context_block = "\n\n".join(chunk_blocks)
     prompt = (
         "You are answering a technical documentation benchmark question.\n"
         "Use only the provided context.\n"
@@ -36,7 +37,7 @@ def assemble_prompt(
         "Prefer exact wording from the context when possible.\n"
         "If the context is insufficient, return exactly: INSUFFICIENT_CONTEXT\n\n"
         f"Question:\n{query.query}\n\n"
-        f"Context:\n{'\n\n'.join(chunk_blocks)}\n"
+        f"Context:\n{context_block}\n"
     )
 
     return PromptPayload(
