@@ -1,6 +1,12 @@
 """Core package for the Context Engine benchmark and runtime contracts."""
 
-from .analysis import QueryBestResult, StrategySummary, best_strategy_per_query, render_text_report, summarize_by_strategy
+from .analysis import (
+    QueryBestResult,
+    StrategySummary,
+    best_strategy_per_query,
+    render_text_report,
+    summarize_by_strategy,
+)
 from .artifacts import (
     ArtifactValidationError,
     CandidatePool,
@@ -23,14 +29,37 @@ from .authoring import (
     make_outcome,
     make_query,
 )
-from .context_sets import DEFAULT_STRATEGIES, GenerationStrategy, generate_context_set, generate_context_sets
+from .context_sets import (
+    DEFAULT_STRATEGIES,
+    GenerationStrategy,
+    generate_context_set,
+    generate_context_sets,
+)
 from .dataset import BenchmarkDataset
 from .env import load_dotenv
-from .evaluation import ScoringWeights, evaluate_context_set, generate_baseline_answer
+from .evaluation import (
+    ScoringWeights,
+    evaluate_context_set,
+    generate_baseline_answer,
+)
 from .io import load_jsonl, write_jsonl
+from .marginal_impact import (
+    MarginalImpactError,
+    Operation,
+    ScoreKey,
+    compute_marginal_impact,
+    evaluate_marginal_impact,
+)
 from .model_outcomes import evaluate_with_runner
 from .prompting import PromptPayload, assemble_prompt
-from .runner import ModelResponse, ModelRunner, OpenAIResponsesRunner, StubModelRunner
+from .runner import (
+    MINIMAX_DEFAULT_MODEL,
+    MiniMaxResponsesRunner,
+    ModelResponse,
+    ModelRunner,
+    OpenAIResponsesRunner,
+    StubModelRunner,
+)
 from .validation import ValidationSummary, validate_jsonl_file
 
 __all__ = [
@@ -43,10 +72,14 @@ __all__ = [
     "CorpusChunk",
     "DEFAULT_STRATEGIES",
     "GenerationStrategy",
+    "MINIMAX_DEFAULT_MODEL",
     "MarginalImpact",
+    "MarginalImpactError",
+    "MiniMaxResponsesRunner",
     "ModelResponse",
     "ModelRunner",
     "OpenAIResponsesRunner",
+    "Operation",
     "Outcome",
     "PromptPayload",
     "Query",
@@ -54,11 +87,18 @@ __all__ = [
     "QueryMetadata",
     "RetrievalComposition",
     "ScoreBundle",
+    "ScoreKey",
     "StrategySummary",
     "StubModelRunner",
     "assemble_prompt",
     "best_strategy_per_query",
+    "compute_marginal_impact",
+    "evaluate_marginal_impact",
     "evaluate_with_runner",
+    "evaluate_context_set",
+    "generate_baseline_answer",
+    "generate_context_set",
+    "generate_context_sets",
     "load_dotenv",
     "load_jsonl",
     "make_candidate_pool",
@@ -68,13 +108,9 @@ __all__ = [
     "make_outcome",
     "make_query",
     "render_text_report",
-    "generate_context_set",
-    "generate_context_sets",
-    "generate_baseline_answer",
-    "evaluate_context_set",
     "summarize_by_strategy",
-    "ValidationSummary",
     "validate_jsonl_file",
     "write_jsonl",
     "ScoringWeights",
+    "ValidationSummary",
 ]
