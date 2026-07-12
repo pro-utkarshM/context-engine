@@ -4,6 +4,8 @@ from unittest.mock import patch
 from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.model_outcomes import evaluate_with_runner
 from context_engine.runner import (
+    MINIMAX_DEFAULT_MODEL,
+    MiniMaxResponsesRunner,
     OpenAIResponsesRunner,
     StubModelRunner,
     _parse_wait_hint_seconds,
@@ -90,7 +92,7 @@ def test_openai_runner_parses_output_text_response() -> None:
                 }
             ).encode("utf-8")
 
-    with patch("context_engine.runner.request.urlopen", return_value=FakeResponse()):
+    with patch("context_engine.runner.request.urlopen", return_value=FakeResponse()) as mocked:
         runner = OpenAIResponsesRunner(api_key="test-key")
         response = runner.run(
             type("Payload", (), {"prompt": "prompt", "estimated_prompt_tokens": 10})(),
@@ -100,6 +102,70 @@ def test_openai_runner_parses_output_text_response() -> None:
     assert response.answer == "The file is pg_hba.conf."
     assert response.prompt_tokens == 42
     assert response.completion_tokens == 5
+    assert mocked.call_args.args[0].full_url == "https://api.openai.com/v1/responses"
+
+
+def test_minimax_default_model_constant() -> None:
+    assert MINIMAX_DEFAULT_MODEL == "MiniMax-M3"
+
+
+def test_minimax_runner_requires_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    runner = MiniMaxResponsesRunner(api_key=None)
+    payload = type("Payload", (), {"prompt": "p", "estimated_prompt_tokens": 1})()
+    try:
+        runner.run(payload, model_name=MINIMAX_DEFAULT_MODEL)
+    except ValueError as exc:
+        assert "MINIMAX_API_KEY" in str(exc)
+    else:
+        raise AssertionError("MiniMaxResponsesRunner.run should require MINIMAX_API_KEY")
+
+
+def test_minimax_runner_parses_output_text_response(monkeypatch) -> None:
+    # Pin both the API key and base URL via env so __post_init__ does not
+    # pick up whatever the developer happens to have in their .env.
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+    monkeypatch.setenv("MINIMAX_BASE_URL", "https://example.invalid/v1")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "output_text": "pg_hba.conf",
+                    "usage": {"input_tokens": 30, "output_tokens": 2},
+                }
+            ).encode("utf-8")
+
+    with patch("context_engine.runner.request.urlopen", return_value=FakeResponse()) as mocked:
+        runner = MiniMaxResponsesRunner()
+        response = runner.run(
+            type("Payload", (), {"prompt": "prompt", "estimated_prompt_tokens": 10})(),
+            model_name=MINIMAX_DEFAULT_MODEL,
+        )
+
+    assert response.answer == "pg_hba.conf"
+    assert response.model_name == MINIMAX_DEFAULT_MODEL
+    assert response.prompt_tokens == 30
+    assert response.completion_tokens == 2
+
+    sent_request = mocked.call_args.args[0]
+    assert sent_request.full_url == "https://example.invalid/v1/responses"
+    assert sent_request.headers["Authorization"] == "Bearer test-key"
+    body = json.loads(sent_request.data.decode("utf-8"))
+    assert body["model"] == MINIMAX_DEFAULT_MODEL
+    assert body["input"] == "prompt"
+
+
+def test_minimax_runner_honors_env_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("MINIMAX_BASE_URL", "https://alt.example/v9/")
+    runner = MiniMaxResponsesRunner(api_key="k")
+    assert runner.default_base_url == "https://alt.example/v9/"
 
 
 def test_retry_delay_uses_retry_after_header() -> None:

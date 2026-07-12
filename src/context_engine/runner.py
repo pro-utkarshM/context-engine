@@ -14,6 +14,11 @@ from urllib import error, request
 from .prompting import PromptPayload
 
 
+# Default model for the MiniMax Responses API runner. Override via the
+# `--model` flag, the `MINIMAX_MODEL` env var, or `config.model_name`.
+MINIMAX_DEFAULT_MODEL = "MiniMax-M3"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelResponse:
     answer: str
@@ -96,31 +101,11 @@ class OpenAIResponsesRunner:
         )
 
     def _execute_with_retries(self, req: request.Request) -> str:
-        attempt = 0
-        while True:
-            try:
-                with request.urlopen(req, timeout=self.timeout_seconds) as response:
-                    return response.read().decode("utf-8")
-            except error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                if exc.code == 429 and attempt < self.max_retries:
-                    delay = _retry_delay_seconds(
-                        detail,
-                        getattr(exc, "headers", None).get("Retry-After") if getattr(exc, "headers", None) else None,
-                        attempt=attempt,
-                        minimum_delay=self.min_retry_delay_seconds,
-                    )
-                    print(
-                        f"rate limited; retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries})",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    time.sleep(delay)
-                    attempt += 1
-                    continue
-                raise RuntimeError(f"OpenAI API request failed with status {exc.code}: {detail}") from exc
-            except error.URLError as exc:
-                raise RuntimeError(f"OpenAI API request failed: {exc.reason}") from exc
+        return _execute_with_retries(
+            req,
+            max_retries=self.max_retries,
+            min_retry_delay_seconds=self.min_retry_delay_seconds,
+        )
 
 
 def _retry_delay_seconds(
@@ -182,3 +167,110 @@ def _extract_output_text(payload_json: dict) -> str:
         return "\n".join(part for part in parts if part).strip()
 
     raise RuntimeError("Could not extract output text from OpenAI response payload")
+
+
+@dataclass(slots=True)
+class MiniMaxResponsesRunner:
+    """MiniMax Responses API runner.
+
+    Uses the OpenAI-compatible `/responses` endpoint exposed by MiniMax, so the
+    wire format is identical to ``OpenAIResponsesRunner``. The differences are
+    only the env keys and the default base URL / model name.
+
+    Environment:
+      - ``MINIMAX_API_KEY`` (required)
+      - ``MINIMAX_BASE_URL`` (optional; overrides ``default_base_url``)
+      - ``MINIMAX_MODEL`` (consumed by the script layer; this class itself
+        has no default model name — the script passes the resolved name in
+        via ``model_name``).
+    """
+
+    api_key: str | None = None
+    # Use a neutral placeholder; the real base URL is provider-specific and
+    # should come from `MINIMAX_BASE_URL` in the developer's `.env`. The
+    # `MiniMaxResponsesRunner` falls back to ``default_base_url`` only when
+    # the env var is unset.
+    default_base_url: str = "https://api.minimax.io/v1"
+    timeout_seconds: float = 60.0
+    max_retries: int = 5
+    min_retry_delay_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.api_key is None:
+            self.api_key = os.environ.get("MINIMAX_API_KEY")
+        env_base_url = os.environ.get("MINIMAX_BASE_URL")
+        if env_base_url:
+            self.default_base_url = env_base_url
+
+    def run(self, payload: PromptPayload, *, model_name: str) -> ModelResponse:
+        if not self.api_key:
+            raise ValueError("MINIMAX_API_KEY is required for MiniMaxResponsesRunner")
+
+        body = {
+            "model": model_name,
+            "input": payload.prompt,
+        }
+        encoded = json.dumps(body).encode("utf-8")
+        req = request.Request(
+            url=f"{self.default_base_url.rstrip('/')}/responses",
+            data=encoded,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        response_body = _execute_with_retries(
+            req,
+            max_retries=self.max_retries,
+            min_retry_delay_seconds=self.min_retry_delay_seconds,
+        )
+
+        payload_json = json.loads(response_body)
+        answer = _extract_output_text(payload_json)
+        usage = payload_json.get("usage", {}) if isinstance(payload_json, dict) else {}
+        prompt_tokens = int(usage.get("input_tokens", payload.estimated_prompt_tokens))
+        completion_tokens = int(
+            usage.get("output_tokens", max(len(answer.split()), 1) if answer else 0)
+        )
+        return ModelResponse(
+            answer=answer,
+            model_name=model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=0,
+        )
+
+
+def _execute_with_retries(
+    req: request.Request,
+    *,
+    max_retries: int,
+    min_retry_delay_seconds: float,
+) -> str:
+    attempt = 0
+    while True:
+        try:
+            with request.urlopen(req, timeout=60.0) as response:
+                return response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 429 and attempt < max_retries:
+                delay = _retry_delay_seconds(
+                    detail,
+                    getattr(exc, "headers", None).get("Retry-After") if getattr(exc, "headers", None) else None,
+                    attempt=attempt,
+                    minimum_delay=min_retry_delay_seconds,
+                )
+                print(
+                    f"rate limited; retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(delay)
+                attempt += 1
+                continue
+            raise RuntimeError(f"HTTP request failed with status {exc.code}: {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"HTTP request failed: {exc.reason}") from exc

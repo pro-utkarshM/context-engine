@@ -10,7 +10,12 @@ from context_engine.artifacts import ContextSet, CorpusChunk, Query
 from context_engine.config import add_config_args, config_from_args, resolved_artifact_path
 from context_engine.io import load_jsonl, write_jsonl
 from context_engine.model_outcomes import evaluate_with_runner
-from context_engine.runner import OpenAIResponsesRunner, StubModelRunner
+from context_engine.runner import (
+    MINIMAX_DEFAULT_MODEL,
+    MiniMaxResponsesRunner,
+    OpenAIResponsesRunner,
+    StubModelRunner,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help="Model name to send to the runner. Overrides config.model_name.")
     parser.add_argument(
         "--runner",
-        choices=("stub", "openai"),
+        choices=("stub", "openai", "minimax"),
         default="stub",
         help="Runner backend to use.",
     )
@@ -101,7 +106,11 @@ def main() -> int:
     load_dotenv()
     args = build_parser().parse_args()
     config = config_from_args(args)
-    model_name = args.model or os.environ.get("OPENAI_MODEL") or config.model_name
+    if args.runner == "minimax":
+        env_model = os.environ.get("MINIMAX_MODEL")
+        model_name = args.model or env_model or MINIMAX_DEFAULT_MODEL
+    else:
+        model_name = args.model or os.environ.get("OPENAI_MODEL") or config.model_name
 
     corpus_chunks = [
         CorpusChunk.from_dict(row)
@@ -120,7 +129,12 @@ def main() -> int:
 
     chunks_by_id = {chunk.chunk_id: chunk for chunk in corpus_chunks}
     queries_by_id = {query.query_id: query for query in queries}
-    runner = StubModelRunner() if args.runner == "stub" else OpenAIResponsesRunner()
+    if args.runner == "stub":
+        runner = StubModelRunner()
+    elif args.runner == "openai":
+        runner = OpenAIResponsesRunner()
+    else:
+        runner = MiniMaxResponsesRunner()
 
     if args.output:
         target = Path(args.output)
