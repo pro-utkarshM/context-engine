@@ -63,6 +63,7 @@ from .marginal_impact import (
     compute_marginal_impact,
     evaluate_marginal_impact,
 )
+from .retrieval import BM25Retriever, RetrievalResult, Retriever, tokenize
 from .model_outcomes import evaluate_with_runner
 from .prompting import PromptPayload, assemble_prompt
 from .runner import (
@@ -78,6 +79,7 @@ from .validation import ValidationSummary, validate_jsonl_file
 __all__ = [
     "ArtifactValidationError",
     "BenchmarkDataset",
+    "BM25Retriever",
     "CandidatePool",
     "ChunkMetadata",
     "ChunkUtility",
@@ -101,6 +103,8 @@ __all__ = [
     "QueryBestResult",
     "QueryMetadata",
     "RetrievalComposition",
+    "RetrievalResult",
+    "Retriever",
     "ScoreBundle",
     "ScoreKey",
     "SelectedChunk",
@@ -133,6 +137,7 @@ __all__ = [
     "render_text_report",
     "select_with_budget",
     "summarize_by_strategy",
+    "tokenize",
     "validate_jsonl_file",
     "write_jsonl",
     "ScoringWeights",
