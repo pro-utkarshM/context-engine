@@ -1,9 +1,14 @@
 """Core package for the Context Engine benchmark and runtime contracts."""
 
 from .analysis import (
+    PerSetRow,
     QueryBestResult,
     StrategySummary,
     best_strategy_per_query,
+    per_set_rows,
+    render_csv_per_query,
+    render_json_report,
+    render_markdown_report,
     render_text_report,
     summarize_by_strategy,
 )
@@ -81,6 +86,7 @@ __all__ = [
     "OpenAIResponsesRunner",
     "Operation",
     "Outcome",
+    "PerSetRow",
     "PromptPayload",
     "Query",
     "QueryBestResult",
@@ -107,6 +113,10 @@ __all__ = [
     "make_marginal_impact",
     "make_outcome",
     "make_query",
+    "per_set_rows",
+    "render_csv_per_query",
+    "render_json_report",
+    "render_markdown_report",
     "render_text_report",
     "summarize_by_strategy",
     "validate_jsonl_file",

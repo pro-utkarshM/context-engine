@@ -1,11 +1,15 @@
-"""Benchmark result aggregation utilities."""
+"""Benchmark result aggregation and reporting utilities."""
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
-from .artifacts import ContextSet, Outcome
+from .artifacts import ContextSet, MarginalImpact, Outcome, Query
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +27,22 @@ class QueryBestResult:
     query_id: str
     best_strategy: str
     best_overall: float
+
+
+@dataclass(frozen=True, slots=True)
+class PerSetRow:
+    set_id: str
+    query_id: str
+    strategy: str
+    token_count: int
+    distractor_types: list[str]
+    correctness: float
+    support: float
+    overall: float
+    prompt_tokens: int
+    completion_tokens: int
+    latency_ms: int
+    evaluator_version: str
 
 
 def summarize_by_strategy(context_sets: list[ContextSet], outcomes: list[Outcome]) -> list[StrategySummary]:
@@ -65,6 +85,31 @@ def best_strategy_per_query(context_sets: list[ContextSet], outcomes: list[Outco
     ]
 
 
+def per_set_rows(context_sets: list[ContextSet], outcomes: list[Outcome]) -> list[PerSetRow]:
+    context_sets_by_id = {context_set.set_id: context_set for context_set in context_sets}
+    rows: list[PerSetRow] = []
+    for outcome in outcomes:
+        context_set = context_sets_by_id[outcome.set_id]
+        rows.append(
+            PerSetRow(
+                set_id=context_set.set_id,
+                query_id=context_set.query_id,
+                strategy=context_set.strategy,
+                token_count=context_set.token_count,
+                distractor_types=list(context_set.metadata.distractor_types),
+                correctness=outcome.scores.correctness,
+                support=outcome.scores.support,
+                overall=outcome.scores.overall,
+                prompt_tokens=outcome.prompt_tokens,
+                completion_tokens=outcome.completion_tokens,
+                latency_ms=outcome.latency_ms,
+                evaluator_version=outcome.evaluator_version,
+            )
+        )
+    rows.sort(key=lambda row: row.set_id)
+    return rows
+
+
 def render_text_report(context_sets: list[ContextSet], outcomes: list[Outcome]) -> str:
     strategy_summaries = summarize_by_strategy(context_sets, outcomes)
     best_results = best_strategy_per_query(context_sets, outcomes)
@@ -88,3 +133,288 @@ def render_text_report(context_sets: list[ContextSet], outcomes: list[Outcome]) 
         )
 
     return "\n".join(lines)
+
+
+def render_json_report(
+    context_sets: list[ContextSet],
+    outcomes: list[Outcome],
+    *,
+    marginal_impacts: list[MarginalImpact] | None = None,
+    queries_by_id: dict[str, Query] | None = None,
+) -> str:
+    """Stable, machine-readable strategy + per-set + impact summary.
+
+    The output is sorted by strategy name and by set_id so the JSON is
+    byte-stable across runs against the same artifacts.
+    """
+    strategy_summaries = summarize_by_strategy(context_sets, outcomes)
+    best_results = best_strategy_per_query(context_sets, outcomes)
+    rows = per_set_rows(context_sets, outcomes)
+
+    payload: dict[str, Any] = {
+        "strategy_summary": [
+            {
+                "strategy": summary.strategy,
+                "run_count": summary.run_count,
+                "avg_correctness": round(summary.avg_correctness, 6),
+                "avg_support": round(summary.avg_support, 6),
+                "avg_overall": round(summary.avg_overall, 6),
+                "avg_prompt_tokens": round(summary.avg_prompt_tokens, 6),
+            }
+            for summary in strategy_summaries
+        ],
+        "best_strategy_per_query": [
+            {
+                "query_id": result.query_id,
+                "best_strategy": result.best_strategy,
+                "best_overall": round(result.best_overall, 6),
+            }
+            for result in best_results
+        ],
+        "per_set": [
+            {
+                "set_id": row.set_id,
+                "query_id": row.query_id,
+                "strategy": row.strategy,
+                "token_count": row.token_count,
+                "distractor_types": row.distractor_types,
+                "correctness": round(row.correctness, 6),
+                "support": round(row.support, 6),
+                "overall": round(row.overall, 6),
+                "prompt_tokens": row.prompt_tokens,
+                "completion_tokens": row.completion_tokens,
+                "latency_ms": row.latency_ms,
+                "evaluator_version": row.evaluator_version,
+            }
+            for row in rows
+        ],
+    }
+
+    if marginal_impacts is not None:
+        payload["marginal_impact_summary"] = _summarize_marginal_impacts(
+            marginal_impacts, queries_by_id=queries_by_id
+        )
+
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def render_csv_per_query(context_sets: list[ContextSet], outcomes: list[Outcome]) -> str:
+    """One row per set_id with a stable column order.
+
+    Use this for PR-attached tables or spreadsheet pivots. The
+    ``distractor_types`` column is a pipe-joined list to keep the CSV
+    parser-friendly.
+    """
+    rows = per_set_rows(context_sets, outcomes)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "set_id",
+            "query_id",
+            "strategy",
+            "token_count",
+            "distractor_types",
+            "correctness",
+            "support",
+            "overall",
+            "prompt_tokens",
+            "completion_tokens",
+            "latency_ms",
+            "evaluator_version",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row.set_id,
+                row.query_id,
+                row.strategy,
+                row.token_count,
+                "|".join(row.distractor_types),
+                f"{row.correctness:.6f}",
+                f"{row.support:.6f}",
+                f"{row.overall:.6f}",
+                row.prompt_tokens,
+                row.completion_tokens,
+                row.latency_ms,
+                row.evaluator_version,
+            ]
+        )
+    return buffer.getvalue()
+
+
+def render_markdown_report(
+    context_sets: list[ContextSet],
+    outcomes: list[Outcome],
+    *,
+    marginal_impacts: list[MarginalImpact] | None = None,
+    queries_by_id: dict[str, Any] | None = None,
+) -> str:
+    """Human-readable markdown report.
+
+    Sections:
+      - Strategy Summary
+      - Best Strategy Per Query
+      - Distractor-Heavy vs Concise-Context Wins
+      - Predicted vs Measured Marginal Impact (only when marginal_impacts is provided)
+    """
+    strategy_summaries = summarize_by_strategy(context_sets, outcomes)
+    best_results = best_strategy_per_query(context_sets, outcomes)
+
+    lines: list[str] = ["# Benchmark Report", "", "## Strategy Summary", ""]
+    lines.append("| strategy | runs | correctness | support | overall | prompt_tokens |")
+    lines.append("|---|---:|---:|---:|---:|---:|")
+    for summary in strategy_summaries:
+        lines.append(
+            f"| {summary.strategy} | {summary.run_count} | "
+            f"{summary.avg_correctness:.3f} | {summary.avg_support:.3f} | "
+            f"{summary.avg_overall:.3f} | {summary.avg_prompt_tokens:.1f} |"
+        )
+
+    lines.extend(["", "## Best Strategy Per Query", ""])
+    lines.append("| query_id | best_strategy | best_overall |")
+    lines.append("|---|---|---:|")
+    for result in best_results:
+        lines.append(
+            f"| {result.query_id} | {result.best_strategy} | {result.best_overall:.3f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Distractor-Heavy vs Concise-Context Wins",
+            "",
+            "Queries where the distractor-heavy strategy (`gold_plus_distractors`) "
+            "out-performs the concise strategy (`gold_only`), and vice versa. "
+            "These cases reveal whether the model is being misled by added context "
+            "or whether additional gold support is needed.",
+            "",
+            "| query_id | gold_only | gold_plus_distractors | winner |",
+            "|---|---:|---:|---|",
+        ]
+    )
+    wins = _distractor_wins(context_sets, outcomes)
+    if not wins:
+        lines.append("| _no data_ | _ | _ | _ |")
+    for row in wins:
+        lines.append(
+            f"| {row['query_id']} | {row['gold_only']:.3f} | "
+            f"{row['gold_plus_distractors']:.3f} | {row['winner']} |"
+        )
+
+    if marginal_impacts is not None:
+        lines.extend(
+            [
+                "",
+                "## Predicted vs Measured Marginal Impact",
+                "",
+                "Predicted utility uses a heuristic slot (`is_gold`) so this view "
+                "is meaningful even before the learned selector lands. A future "
+                "release will replace the heuristic with the selector's score; "
+                "the view's shape stays the same.",
+                "",
+                "| predicted_role | chunk_count | mean_delta | sum_delta | positive_share |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        impact_summary = _summarize_marginal_impacts(marginal_impacts, queries_by_id=queries_by_id)
+        for row in impact_summary["by_predicted_role"]:
+            lines.append(
+                f"| {row['predicted_role']} | {row['chunk_count']} | "
+                f"{row['mean_delta']:.4f} | {row['sum_delta']:.4f} | "
+                f"{row['positive_share']:.3f} |"
+            )
+        lines.append("")
+        lines.append(
+            f"_Total impact rows: {impact_summary['row_count']}; "
+            f"queries covered: {impact_summary['query_count']}._"
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def _distractor_wins(
+    context_sets: list[ContextSet], outcomes: list[Outcome]
+) -> list[dict[str, Any]]:
+    """For each query, compare gold_only vs gold_plus_distractors overall scores."""
+    by_query_strategy: dict[str, dict[str, float]] = defaultdict(dict)
+    context_sets_by_id = {context_set.set_id: context_set for context_set in context_sets}
+    for outcome in outcomes:
+        context_set = context_sets_by_id[outcome.set_id]
+        by_query_strategy[context_set.query_id][context_set.strategy] = outcome.scores.overall
+
+    wins: list[dict[str, Any]] = []
+    for query_id in sorted(by_query_strategy):
+        scores = by_query_strategy[query_id]
+        gold_only = scores.get("gold_only")
+        gold_plus = scores.get("gold_plus_distractors")
+        if gold_only is None or gold_plus is None:
+            continue
+        if gold_plus > gold_only:
+            winner = "distractor_heavy_wins"
+        elif gold_only > gold_plus:
+            winner = "concise_wins"
+        else:
+            winner = "tie"
+        wins.append(
+            {
+                "query_id": query_id,
+                "gold_only": gold_only,
+                "gold_plus_distractors": gold_plus,
+                "winner": winner,
+            }
+        )
+    return wins
+
+
+def _summarize_marginal_impacts(
+    impacts: list[MarginalImpact],
+    *,
+    queries_by_id: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Aggregate marginal impacts by predicted-role (heuristic = is_gold).
+
+    When the learned selector lands, swap the ``_predict_role`` predicate
+    for the selector's score and the view stays valid.
+    """
+    by_role: dict[str, list[float]] = defaultdict(list)
+    queries_seen: set[str] = set()
+    for impact in impacts:
+        queries_seen.add(impact.query_id)
+        role = _predict_role(impact, queries_by_id)
+        by_role[role].append(impact.delta)
+
+    rows: list[dict[str, Any]] = []
+    for role in sorted(by_role):
+        deltas = by_role[role]
+        rows.append(
+            {
+                "predicted_role": role,
+                "chunk_count": len(deltas),
+                "mean_delta": round(sum(deltas) / len(deltas), 6),
+                "sum_delta": round(sum(deltas), 6),
+                "positive_share": round(
+                    sum(1 for delta in deltas if delta > 0) / len(deltas), 6
+                ),
+            }
+        )
+
+    return {
+        "row_count": len(impacts),
+        "query_count": len(queries_seen),
+        "by_predicted_role": rows,
+    }
+
+
+def _predict_role(impact: MarginalImpact, queries_by_id: dict[str, Any] | None) -> str:
+    """Heuristic predictor. Replaced by learned selector in Phase E (#3)."""
+    if queries_by_id is None:
+        return "unknown"
+    query = queries_by_id.get(impact.query_id)
+    if query is None:
+        return "unknown"
+    gold_ids = set(query.gold_support_ids or [])
+    if impact.chunk_id in gold_ids:
+        return "gold"
+    return "distractor"
