@@ -172,6 +172,7 @@ def _paired_summary_to_dict(summary: PairedDeltaSummary) -> dict[str, Any]:
         "ci_low": round(summary.ci_low, 6),
         "ci_high": round(summary.ci_high, 6),
         "ci_level": round(summary.ci_level, 6),
+        "p_value_one_sided": round(summary.p_value_one_sided, 6),
         "p_value_two_sided": round(summary.p_value_two_sided, 6),
         "n_resamples": summary.n_resamples,
         "seed": summary.seed,

@@ -6,23 +6,34 @@ runner code is plain HTTP + stdlib" as a load-bearing principle. The
 statistical functions here are intentionally small, deterministic given
 a seed, and operate on plain Python numbers.
 
-Two views are exposed:
+## p-value definitions (pinned)
 
-- ``summarize_distribution`` collapses a flat list of observations to a
-  mean + bootstrap CI. Use for "what is the spread of correctness across
-  queries?" or "what is the overall score for a strategy across N runs?".
+The percentile bootstrap is used to compute two explicit p-values:
 
-- ``summarize_paired_delta`` collapses two parallel lists (left and
-  right) to a mean difference + bootstrap CI, treating observations as
-  paired by index. Use for "auto minus canonical, per-query".
+``p_value_one_sided`` — the **one-sided tail probability**:
+``P(bootstrap_delta has sign disagreeing with observed)``. This is
+the share of bootstrap means whose sign disagrees with the observed
+mean. For positive observed effect it equals
+``P(bootstrap_delta <= 0)``. Floored at ``1/n_resamples`` to avoid
+reporting an exact zero.
+
+``p_value_two_sided`` — the **two-sided bootstrap p-value**:
+``min(1.0, 2 * min(p_lower, p_upper))`` where
+``p_lower = P(bootstrap_delta <= 0)`` and
+``p_upper = P(bootstrap_delta >= 0)``. Capped at ``1.0``. This is the
+quantity that should be compared to a two-sided significance
+threshold (e.g. ``0.05``).
+
+The legacy single-name ``p_value_two_sided`` field on this dataclass
+is deprecated and will be removed in a future version. Use the
+explicit ``p_value_one_sided`` and ``p_value_two_sided`` fields
+instead.
+
+## Bootstrap method
 
 The bootstrap is the percentile method (resample with replacement,
-collect the statistic, take the empirical percentiles). With N = 5
-benchmark replications and 10 queries per strategy, the per-run mean is
-the observed mean of 10 outcomes and the bootstrap resamples those 5
-per-run means — so the CI reflects *run-to-run* variance, not within-run
-query variance. Use ``summarize_distribution`` on the per-query scores
-of a single run for the within-run view.
+collect the statistic, take the empirical percentiles). The CI is
+the central ``ci_level`` mass of the bootstrap distribution.
 """
 
 from __future__ import annotations
@@ -68,12 +79,25 @@ class PairedDeltaSummary:
     """Result of a paired-delta summary.
 
     The signed delta is ``left[i] - right[i]`` at each index; the CI is
-    on the mean of those deltas. ``p_value_two_sided`` is the percentile
-    bootstrap two-sided p-value: the share of bootstrap delta-means
-    whose sign disagrees with the observed mean (clamped to ``>= 1 /
-    n_resamples`` to avoid reporting an exact zero). It is intentionally
-    *not* a t-test p-value — see ROADMAP notes for why the bootstrap is
-    the right tool here.
+    on the mean of those deltas.
+
+    p-value terminology (pinned):
+
+    - ``p_value_one_sided``: the one-sided tail probability — the
+      share of bootstrap means whose sign disagrees with the observed
+      mean. For positive observed effect, this is
+      ``P(bootstrap_delta <= 0)``. Floored at ``1/n_resamples`` to
+      avoid an exact zero.
+    - ``p_value_two_sided``: the two-sided bootstrap p-value —
+      ``min(1.0, 2 * min(p_lower, p_upper))`` where ``p_lower`` and
+      ``p_upper`` are the lower and upper one-sided tail probabilities.
+      This is the value to compare against a two-sided significance
+      threshold.
+
+    The bootstrap is the percentile method. The legacy single-name
+    field on prior versions of this dataclass was mislabeled — it
+    was a one-sided value reported as a two-sided value. The new
+    explicit fields fix this.
     """
 
     n: int
@@ -82,6 +106,7 @@ class PairedDeltaSummary:
     ci_low: float
     ci_high: float
     ci_level: float
+    p_value_one_sided: float
     p_value_two_sided: float
     n_resamples: int
     seed: int
@@ -195,6 +220,11 @@ def summarize_paired_delta(
     Use for "auto pool score minus canonical pool score, paired by
     query". The bootstrap resamples the *deltas* (not the raw
     observations), preserving the pairing.
+
+    Returns a ``PairedDeltaSummary`` with both the one-sided tail
+    probability (``p_value_one_sided``) and the proper two-sided
+    bootstrap p-value (``p_value_two_sided``). See the module-level
+    docstring for the exact definitions.
     """
     if n_resamples < 1:
         raise ValueError(f"n_resamples must be >= 1, got {n_resamples}")
@@ -216,16 +246,22 @@ def summarize_paired_delta(
     bootstrap_means = _bootstrap_resample_mean(deltas, n_resamples=n_resamples, rng=rng)
     ci_low, ci_high = _ci_bounds(bootstrap_means, ci_level)
 
-    # Two-sided percentile p-value: share of bootstrap means whose sign
-    # disagrees with the observed mean, with a floor of 1/n_resamples
-    # so a perfect fit never reports p == 0.
+    # One-sided tail probability: share of bootstrap means whose sign
+    # disagrees with the observed mean, floored at 1/n_resamples.
     if mean_delta == 0.0:
-        p_value_two_sided = 1.0
+        p_value_one_sided = 1.0
     else:
         opposite_sign = sum(
             1 for value in bootstrap_means if (value > 0.0) != (mean_delta > 0.0)
         )
-        p_value_two_sided = max(opposite_sign / n_resamples, 1.0 / n_resamples)
+        p_value_one_sided = max(opposite_sign / n_resamples, 1.0 / n_resamples)
+
+    # Two-sided bootstrap p-value: 2 * min(p_lower, p_upper), capped at 1.0.
+    # Counts include both endpoints so the function is symmetric on the
+    # signed axis.
+    p_lower = sum(1 for v in bootstrap_means if v <= 0.0) / n_resamples
+    p_upper = sum(1 for v in bootstrap_means if v >= 0.0) / n_resamples
+    p_value_two_sided = min(1.0, 2.0 * min(p_lower, p_upper))
 
     return PairedDeltaSummary(
         n=n,
@@ -234,6 +270,7 @@ def summarize_paired_delta(
         ci_low=ci_low,
         ci_high=ci_high,
         ci_level=ci_level,
+        p_value_one_sided=p_value_one_sided,
         p_value_two_sided=p_value_two_sided,
         n_resamples=n_resamples,
         seed=seed,

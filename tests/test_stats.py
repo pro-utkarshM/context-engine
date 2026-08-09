@@ -133,16 +133,39 @@ def test_summary_records_are_immutable():
         delta.mean_delta = 0.0  # type: ignore[misc]
 
 
-def test_perfect_separation_yields_tiny_p_value():
-    """If every paired delta is positive, the bootstrap p-value should
-    fall at the 1/n_resamples floor (no bootstrap sample flips sign)."""
+def test_perfect_separation_yields_tiny_p_value_one_sided():
+    """If every paired delta is positive, the one-sided tail probability
+    should fall at the 1/n_resamples floor (no bootstrap sample flips
+    sign). The two-sided p-value is 2 * min(p_lower, p_upper)."""
     delta = summarize_paired_delta(
         [0.9, 0.8, 0.7, 0.6, 0.5],
         [0.1, 0.2, 0.3, 0.4, 0.5],
         n_resamples=1000,
         seed=0,
     )
-    assert math.isclose(delta.p_value_two_sided, 1.0 / 1000, abs_tol=1e-12)
+    # One-sided tail probability is the floor.
+    assert math.isclose(delta.p_value_one_sided, 1.0 / 1000, abs_tol=1e-12)
+    # Two-sided p-value: 2 * min(p_lower, p_upper). With most bootstrap
+    # means positive, p_lower is small (only bootstrap samples that
+    # picked the zero delta land at exactly 0). The floor of 1/n applies
+    # via the <= 0 count.
+    assert 0.0 <= delta.p_value_two_sided <= 2.0 / 1000
+
+
+def test_perfect_separation_zero_deltas_yields_zero_two_sided_p():
+    """If every paired delta is positive *and* the bootstrap distribution
+    has no mass on the opposite side, the two-sided p-value is 0.
+    """
+    delta = summarize_paired_delta(
+        [0.9, 0.8, 0.7, 0.6, 0.5],
+        [0.1, 0.2, 0.3, 0.4, 0.0],  # all deltas strictly positive
+        n_resamples=1000,
+        seed=0,
+    )
+    assert math.isclose(delta.p_value_one_sided, 1.0 / 1000, abs_tol=1e-12)
+    # All bootstrap means are strictly positive, so p_lower = 0 and
+    # the two-sided p-value is 0.
+    assert delta.p_value_two_sided == 0.0
 
 
 def test_ci_level_changes_width():
@@ -178,6 +201,7 @@ def test_summary_dataclass_export_shape():
         "ci_low",
         "ci_high",
         "ci_level",
+        "p_value_one_sided",
         "p_value_two_sided",
         "n_resamples",
         "seed",

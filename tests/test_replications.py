@@ -233,6 +233,10 @@ def test_paired_summary_skips_strategies_missing_on_either_side():
 
 
 def test_paired_summary_to_dict_includes_p_value():
+    """p_value fields are serialized for downstream reports. The legacy
+    ``p_value_two_sided`` field is now the proper two-sided bootstrap
+    p-value; ``p_value_one_sided`` is also reported.
+    """
     left = _synthetic_run({"gold_only": [0.7, 0.8, 0.9, 0.6, 0.5]})
     right = _synthetic_run({"gold_only": [0.5, 0.6, 0.7, 0.4, 0.3]})
     pairs = paired_summary(
@@ -243,7 +247,9 @@ def test_paired_summary_to_dict_includes_p_value():
         seed=0,
     )
     payload = pairs[0].to_dict()
+    assert "p_value_one_sided" in payload["delta_summary"]
     assert "p_value_two_sided" in payload["delta_summary"]
+    assert payload["delta_summary"]["p_value_one_sided"] < 0.05
     assert payload["delta_summary"]["p_value_two_sided"] < 0.05
 
 
