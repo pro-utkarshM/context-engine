@@ -13,6 +13,16 @@ terms with their gold chunks).
 
 A pluggable :class:`Retriever` Protocol lets later phases swap in learned
 retrievers without changing the candidate-pool builder or selector.
+
+The v1 library ships two retrievers:
+
+- :class:`BM25Retriever` - classic BM25 (inverse-document-frequency
+  weighted term overlap).
+- :class:`BM25ExactMatchRetriever` - BM25 followed by an exact-phrase
+  rerank. Useful for short technical corpora where specific phrases
+  appear verbatim in the right chunks.
+
+Both are pure stdlib, deterministic, and indexed at corpus load time.
 """
 
 from __future__ import annotations
@@ -191,3 +201,126 @@ class BM25Retriever:
             denominator = f + self.k1 * len_norm
             score += idf * (numerator / denominator)
         return score
+
+
+@dataclass(slots=True)
+class BM25ExactMatchRetriever:
+    """Hybrid retriever: BM25 over the corpus, then an exact-phrase rerank.
+
+    Why it exists: the v1 corpus is small (8 chunks) and the queries
+    contain specific phrases ("pg_hba.conf", "hostssl", "SIGHUP", ...)
+    that are also contained verbatim in the gold chunks. BM25 alone
+    captures the *term overlap* signal but not the *exact phrase match*
+    signal. A chunk that repeats a multi-word phrase from the query
+    verbatim is more likely to be the gold than a chunk that has the
+    same terms but in different order.
+
+    This retriever composes with a ``BM25Retriever``:
+
+    1. ``bm25_retriever`` returns its top ``prefilter_pool_size`` results
+       (>= ``pool_size``) ordered by BM25 score.
+    2. Each result is rescored as ``bm25_score + boost_factor * phrase_score``.
+    3. The top ``pool_size`` by the combined score is returned.
+
+    The ``phrase_score`` is the sum of n-gram lengths whose phrase
+    appears verbatim in the chunk text. For a query "X Y Z", the
+    unigrams "X", "Y", "Z" each contribute 1 if present; bigrams "X Y"
+    and "Y Z" each contribute 2 if present; trigram "X Y Z" contributes
+    3 if present. Longer phrases dominate, so a chunk that contains
+    the full query trigram scores higher than one that only contains
+    one of the words.
+
+    Empty query / no-index guards are inherited from the underlying
+    BM25 retriever. Filter metadata is forwarded.
+
+    Properties:
+      - pure stdlib (substring matching; no regex flavour reliance)
+      - deterministic given the same BM25 index and the same query
+      - safe to call on indices rebuilt mid-corpus; the rerank step
+        does not mutate the underlying BM25 state
+    """
+
+    name: str = "bm25_exact"
+    boost_factor: float = 1.0
+    max_phrase_length: int = 3
+    min_phrase_length: int = 1
+    prefilter_factor: int = 2
+    bm25_retriever: BM25Retriever = field(default_factory=BM25Retriever)
+
+    def index(self, chunks: Iterable[CorpusChunk]) -> None:
+        """Build the BM25 index. The rerank step is query-only, no extra state."""
+        self.bm25_retriever.index(chunks)
+
+    def _query_phrases(self, query: str) -> list[tuple[str, int]]:
+        """Tokenize the query and return ``(phrase, n_gram_length)`` pairs.
+
+        Phrases are returned as space-joined lowercase tokens, no
+        punctuation. The caller does substring matching against the
+        chunk text (which is also lowercased for the match).
+        """
+        tokens = tokenize(query)
+        phrases: list[tuple[str, int]] = []
+        for n in range(self.min_phrase_length, self.max_phrase_length + 1):
+            for start in range(0, len(tokens) - n + 1):
+                phrase = " ".join(tokens[start:start + n])
+                if phrase:
+                    phrases.append((phrase, n))
+        return phrases
+
+    def _phrase_score(self, chunk_text: str, phrases: list[tuple[str, int]]) -> float:
+        """Sum of n-gram lengths whose phrase appears verbatim in the chunk."""
+        if not phrases:
+            return 0.0
+        chunk_lower = chunk_text.lower()
+        score = 0.0
+        for phrase, length in phrases:
+            if phrase in chunk_lower:
+                score += length
+        return score
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        pool_size: int,
+        filter_metadata: Mapping[str, object] | None = None,
+    ) -> list[RetrievalResult]:
+        if pool_size <= 0:
+            return []
+        if self.boost_factor < 0:
+            raise ValueError("boost_factor must be >= 0")
+
+        prefilter_pool_size = max(pool_size * self.prefilter_factor, pool_size)
+        bm25_results = self.bm25_retriever.retrieve(
+            query,
+            pool_size=prefilter_pool_size,
+            filter_metadata=filter_metadata,
+        )
+        if not bm25_results:
+            return []
+
+        # Build a map from chunk_id -> chunk text for the rerank step.
+        bm25_by_id = {result.chunk_id: result for result in bm25_results}
+        phrases = self._query_phrases(query)
+
+        reranked: list[tuple[str, float, float]] = []
+        for chunk_id, bm25_result in bm25_by_id.items():
+            chunk = self.bm25_retriever._chunks_by_id.get(chunk_id)
+            if chunk is None:
+                # Should not happen: BM25 only returns indexed chunks.
+                continue
+            phrase_score = self._phrase_score(chunk.text, phrases)
+            combined = bm25_result.score + self.boost_factor * phrase_score
+            reranked.append((chunk_id, combined, phrase_score))
+
+        reranked.sort(key=lambda item: (-item[1], item[0]))
+        top = reranked[:pool_size]
+
+        return [
+            RetrievalResult(
+                chunk_id=chunk_id,
+                score=combined_score,
+                retriever_name=self.name,
+            )
+            for chunk_id, combined_score, _ in top
+        ]

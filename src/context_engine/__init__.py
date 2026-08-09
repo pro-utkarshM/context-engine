@@ -71,7 +71,7 @@ from .replications import (
     paired_summary,
     summarize_replications,
 )
-from .retrieval import BM25Retriever, RetrievalResult, Retriever, tokenize
+from .retrieval import BM25ExactMatchRetriever, BM25Retriever, RetrievalResult, Retriever, tokenize
 from .stats import (
     DistributionSummary,
     PairedDeltaSummary,
@@ -92,6 +92,7 @@ from .validation import ValidationSummary, validate_jsonl_file
 __all__ = [
     "ArtifactValidationError",
     "BenchmarkDataset",
+    "BM25ExactMatchRetriever",
     "BM25Retriever",
     "CandidatePool",
     "ChunkMetadata",

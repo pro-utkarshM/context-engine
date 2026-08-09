@@ -32,7 +32,7 @@ from context_engine.config import (
     resolved_artifact_path,
 )
 from context_engine.io import load_jsonl, write_jsonl
-from context_engine.retrieval import BM25Retriever
+from context_engine.retrieval import BM25ExactMatchRetriever, BM25Retriever
 
 
 DEFAULT_POOL_SIZE = 5
@@ -70,9 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--retriever",
-        choices=("bm25",),
+        choices=("bm25", "bm25_exact"),
         default="bm25",
-        help="Retriever to use. Default: bm25.",
+        help="Retriever to use. Default: bm25. "
+        "bm25_exact is a hybrid BM25 + exact-phrase rerank.",
     )
     parser.add_argument(
         "--output",
@@ -101,7 +102,7 @@ def build_pool_for_query(
     *,
     query: Query,
     artifact_version: str,
-    retriever: BM25Retriever,
+    retriever: BM25Retriever | BM25ExactMatchRetriever,
     chunks_by_id: dict[str, CorpusChunk],
     pool_size: int,
     plausible_count: int,
@@ -161,9 +162,12 @@ def main() -> int:
     ]
     chunks_by_id = {chunk.chunk_id: chunk for chunk in corpus_chunks}
 
-    if args.retriever != "bm25":
+    if args.retriever == "bm25":
+        retriever = BM25Retriever()
+    elif args.retriever == "bm25_exact":
+        retriever = BM25ExactMatchRetriever()
+    else:
         raise SystemExit(f"unknown retriever: {args.retriever}")
-    retriever = BM25Retriever()
     retriever.index(corpus_chunks)
 
     pools = [
