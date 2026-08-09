@@ -133,3 +133,129 @@ def test_build_candidate_pools_bm25_exact_includes_gold(tmp_path: Path, monkeypa
 def test_build_candidate_pools_rejects_unknown_retriever(tmp_path: Path, monkeypatch):
     with pytest.raises(SystemExit):
         _run_build(monkeypatch, tmp_path, "--retriever", "bogus")
+
+def test_build_candidate_pools_multi_hop_includes_all_gold(tmp_path: Path, monkeypatch):
+    """Multi-hop queries (multiple gold chunks) must have ALL gold chunks
+    in the candidate pool."""
+    config_path = tmp_path / "config.json"
+    corpus_path = tmp_path / "corpus_chunks_v1.jsonl"
+    queries_path = tmp_path / "queries_v1.jsonl"
+
+    # Simulate a multi-hop query with 2 gold chunks
+    chunks = [
+        _chunk("gold_a", "primary authentication mechanism"),
+        _chunk("gold_b", "fallback authentication mechanism"),
+        _chunk("c3", "unrelated block"),
+        _chunk("c4", "description of auth"),
+        _chunk("c5", "history of auth"),
+    ]
+    queries = [
+        _query("q1", "primary authentication and fallback behavior", "gold_a"),
+    ]
+    # Manually set multiple gold chunks
+    queries[0] = Query.from_dict({
+        "query_id": "q1",
+        "query": "primary authentication and fallback behavior",
+        "task_type": "doc_qa",
+        "difficulty": "hard",
+        "gold_answer": "x",
+        "gold_support_ids": ["gold_a", "gold_b"],
+        "metadata": {
+            "topic": "authentication",
+            "requires_multi_hop": True,
+            "question_family": "comparison",
+        },
+    })
+    _write_jsonl(corpus_path, [c.to_dict() for c in chunks])
+    _write_jsonl(queries_path, [q.to_dict() for q in queries])
+
+    config_path.write_text(
+        json.dumps({
+            "experiment_name": "test",
+            "model_name": "stub",
+            "selector_strategy": "default",
+            "evaluator_version": "eval_v1",
+            "dataset_dir": str(tmp_path),
+            "artifact_version": "v1",
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["build_candidate_pools", "--config", str(config_path), "--retriever", "bm25"],
+    )
+    spec = importlib.util.spec_from_file_location(
+        "build_candidate_pools", "scripts/build_candidate_pools.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    rc = module.main()
+    assert rc == 0
+
+    pools_path = tmp_path / "candidate_pools_v1.jsonl"
+    pools = [
+        CandidatePool.from_dict(json.loads(line))
+        for line in pools_path.read_text().splitlines()
+        if line.strip()
+    ]
+    assert len(pools) == 1
+    pool = pools[0]
+    # Both gold chunks must be in the pool
+    assert "gold_a" in pool.candidate_ids
+    assert "gold_b" in pool.candidate_ids
+    assert pool.gold_in_pool is True
+    assert pool.composition.gold_count == 2
+
+
+def test_build_candidate_pools_rejects_too_many_gold_for_pool_size(tmp_path: Path, monkeypatch):
+    """If the query has more gold chunks than pool_size, the build
+    script raises a clear error rather than silently dropping gold."""
+    config_path = tmp_path / "config.json"
+    corpus_path = tmp_path / "corpus_chunks_v1.jsonl"
+    queries_path = tmp_path / "queries_v1.jsonl"
+
+    chunks = [_chunk(f"c{i}", f"text {i}") for i in range(1, 6)]
+    queries = [
+        Query.from_dict({
+            "query_id": "q1",
+            "query": "test",
+            "task_type": "doc_qa",
+            "difficulty": "hard",
+            "gold_answer": "x",
+            "gold_support_ids": ["c1", "c2", "c3", "c4", "c5", "c6"],
+            "metadata": {
+                "topic": "authentication",
+                "requires_multi_hop": True,
+                "question_family": "comparison",
+            },
+        }),
+    ]
+    _write_jsonl(corpus_path, [c.to_dict() for c in chunks])
+    _write_jsonl(queries_path, [q.to_dict() for q in queries])
+
+    config_path.write_text(
+        json.dumps({
+            "experiment_name": "test",
+            "model_name": "stub",
+            "selector_strategy": "default",
+            "evaluator_version": "eval_v1",
+            "dataset_dir": str(tmp_path),
+            "artifact_version": "v1",
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["build_candidate_pools", "--config", str(config_path), "--retriever", "bm25", "--pool-size", "5"],
+    )
+    spec = importlib.util.spec_from_file_location(
+        "build_candidate_pools", "scripts/build_candidate_pools.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.raises(ValueError, match="6 gold chunks"):
+        module.main()

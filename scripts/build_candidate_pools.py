@@ -176,6 +176,17 @@ def build_pool_for_query(
     distractor_count: int,
     neutral_count: int,
 ) -> CandidatePool:
+    """Build the candidate pool for a single query.
+
+    Algorithm:
+      1. Retrieve top-K candidates from the retriever.
+      2. Ensure ALL gold chunks are in the pool (multi-hop safe).
+         - Insert each missing gold chunk at the front, in gold_id order.
+         - If the list exceeds pool_size after gold insertion, truncate
+           from the END (drop distractors, not gold).
+      3. If gold_in_pool still fails (e.g., pool_size < number of gold
+         chunks), raise a clear error.
+    """
     results = retriever.retrieve(query.query, pool_size=pool_size)
     retrieved_ids = [r.chunk_id for r in results]
 
@@ -185,20 +196,34 @@ def build_pool_for_query(
             f"query {query.query_id} has no gold_support_ids; cannot guarantee gold_in_pool"
         )
 
-    gold_id = gold_ids[0]
-    if gold_id not in retrieved_ids:
-        retrieved_ids.insert(0, gold_id)
+    # Insert all gold chunks at the front, in order, deduping.
+    pool = list(retrieved_ids)
+    for gold_id in gold_ids:
+        if gold_id not in pool:
+            pool.insert(0, gold_id)
 
-    candidate_ids = retrieved_ids[:pool_size]
+    # Truncate to pool_size. If truncating would drop a gold chunk,
+    # raise an error rather than silently violate the contract.
+    if len(gold_ids) > pool_size:
+        raise ValueError(
+            f"query {query.query_id} has {len(gold_ids)} gold chunks, "
+            f"but pool_size={pool_size}; cannot fit all gold chunks"
+        )
+    candidate_ids = pool[:pool_size]
+    for gold_id in gold_ids:
+        if gold_id not in candidate_ids:
+            raise ValueError(
+                f"query {query.query_id}: gold chunk {gold_id} dropped "
+                f"from pool after truncation; this should be impossible. "
+                f"pool={candidate_ids}"
+            )
 
-    # Defend against the truncate step dropping gold.
-    if gold_id not in candidate_ids:
-        candidate_ids[-1] = gold_id
-
+    # Use the first gold id as the "primary" gold for classification.
+    primary_gold_id = gold_ids[0]
     candidate_metadata: dict[str, dict[str, str]] = {
         cid: {
-            "role": _classify(cid, gold_id),
-            "distractor_type": _classify(cid, gold_id),
+            "role": _classify(cid, primary_gold_id),
+            "distractor_type": _classify(cid, primary_gold_id),
         }
         for cid in candidate_ids
     }
@@ -207,11 +232,11 @@ def build_pool_for_query(
         query_id=query.query_id,
         candidate_pool_id=f"pool_{query.query_id}_{artifact_version}",
         candidate_ids=candidate_ids,
-        gold_count=1,
+        gold_count=len(gold_ids),
         plausible_count=plausible_count,
         distractor_count=distractor_count,
         neutral_count=neutral_count,
-        gold_in_pool=gold_id in candidate_ids,
+        gold_in_pool=all(g in candidate_ids for g in gold_ids),
     )
 
 

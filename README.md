@@ -91,35 +91,145 @@ The v1 benchmark has been built and validated. The current state is:
 - **5 canonical strategies** (gold_only, gold_plus_distractors, minimal_support, shuffled_order, topk_pool_order) plus the **learned_v3** estimator.
 - **3 prompt policies** (always_question_first, always_context_first, adaptive_by_chunk_count).
 
-### Thesis-validation status (audited, Phase M)
+### Confirmatory results (Phase N)
 
-The audit-grade paired query comparison (per-query mean, n_queries = 10
-independent, 5 reps per query, bootstrap 2000 rep, seed 0):
+The PG-Context-Select-v1 benchmark was expanded to 30 queries:
 
-Sign convention: `delta = learned_v3_context_first - canonical_strategy`.
-Positive = learned wins.
+- **Development set** (q_0001-q_0010, 10 queries): original queries,
+  used for method development.
+- **Confirmatory set** (q_0011-q_0030, 20 queries): newly authored
+  with no model-side inspection until the benchmark freeze.
 
-| Comparison | delta | 95% CI (raw) | p_one_sided | p_two_sided | Verdict |
-|---|---:|---|---:|---:|---|
-| learned_v3_context_first vs topk_pool_order | +0.0588 | [+0.0000, +0.1260] / (raw: 0.0, 0.126) | 0.0255 | 0.0510 | **borderline / suggestive** |
-| learned_v3_context_first vs gold_plus_distractors (oracle-informed) | +0.0108 | [-0.0314, +0.0703] | 0.3515 | 0.7030 | inconclusive |
-| learned_v3_context_first vs gold_only | +0.0474 | [-0.0124, +0.1402] | 0.1260 | 0.2520 | inconclusive |
-| learned_v3_context_first vs minimal_support | -0.0030 | [-0.0288, +0.0312] | 0.3575 | 0.7150 | inconclusive |
-| learned_v3_context_first vs shuffled_order | +0.0168 | [-0.0168, +0.0588] | 0.2865 | 0.5730 | inconclusive |
+The benchmark is `split` to make the development vs confirmatory
+membership explicit. Selection of the new queries did NOT involve
+running the learned selector on them.
 
-**Reading**:
+#### Primary pre-specified comparison (confirmatory, n=20)
 
-- The learned selector shows **borderline / suggestive** improvement
-  over the canonical static baseline (`topk_pool_order`) on the v1
-  development corpus. The CI lower bound is exactly 0.0 (not
-  strictly positive), so the CI does NOT exclude zero. The two-sided
-  p-value is 0.0510 — just above the 5% threshold.
-- The learned selector is **competitive** with the oracle-informed
-  reference (`gold_plus_distractors`) — the CI crosses 0, so we
-  cannot reject the null of no difference.
-- The thesis is **NOT yet formally validated.** The current verdict
-  is "borderline / suggestive" on the v1 development corpus. The
-  confirmatory test is the ~30-query expansion.
+```
+Sign convention: delta = learned_v3 - topk_pool_order (positive = learned wins)
+
+  learned mean: 0.5948
+  topk mean:    0.5444
+  mean_delta:   +0.0504
+
+  95% bootstrap CI (raw float):
+    ci_low  = 0.004200000000000001    (strictly > 0)
+    ci_high = 0.09659999999999999
+
+  p_value_one_sided: 0.0155
+  p_value_two_sided: 0.0310
+
+  Win/loss/tie: 10 / 3 / 7
+
+  Verdict: validated on development benchmark
+```
+
+The strict pre-specified criterion (`ci_low > 0 AND p_value_two_sided
+< 0.05`) is met on the confirmatory set. The result is a
+**borderline / suggestive improvement** on the confirmatory 20-query
+subset of the development benchmark.
+
+#### Secondary (oracle-informed) comparison
+
+```
+learned_v3 vs gold_plus_distractors on confirmatory:
+  mean_delta:   -0.0019
+  95% CI: [-0.0440, +0.0390]
+  p_two_sided: 0.9510
+  Verdict: inconclusive
+```
+
+The learned selector is competitive with the oracle-informed
+reference but is not demonstrably better.
+
+#### Development set result (n=10)
+
+```
+learned_v3 vs topk_pool_order on development:
+  mean_delta:   -0.0588
+  95% CI: [-0.1176, -0.0084]
+  p_two_sided: 0.0100
+  Verdict: negative direction (canon wins)
+```
+
+The development set shows the OPPOSITE direction: learned is
+reliably WORSE than topk_pool_order on the 10 development queries.
+
+#### Full 30-query result
+
+```
+learned_v3 vs topk_pool_order on full 30:
+  mean_delta:   +0.0140
+  95% CI: [-0.0252, +0.0532]
+  p_two_sided: 0.4600
+  Verdict: inconclusive
+```
+
+The development-set negative effect partially cancels the
+confirmatory-set positive effect, producing an inconclusive full
+result.
+
+#### Interpreting the development vs confirmatory contradiction
+
+The development set was used extensively for method development
+(prompt-policy ablation, adaptive policy design, p-value definitions).
+The development-set queries are biased against the learned selector
+because the model-side tuning used these queries.
+
+The confirmatory set is held out from selection-time tuning. The
+result there is **learned wins reliably**.
+
+This is the standard in-sample vs out-of-sample pattern: tuning on a
+sample overestimates performance on that sample relative to the held-out
+performance.
+
+#### Scope of the conclusion
+
+The pre-specified confirmatory result is:
+
+> On the confirmatory 20-query subset of the
+> PG-Context-Select-v1 development benchmark, learned_v3 produces
+> a higher mean overall score than topk_pool_order by Δ = +0.0504
+> (95% CI [+0.0042, +0.0966], p_value_two_sided = 0.0310).
+
+This is **not** a broad thesis validation. The strongest allowed scope
+is:
+
+> "On the current PG-Context-Select-v1 development benchmark."
+
+Limitations:
+
+- The benchmark covers PostgreSQL documentation only.
+- The model is MiniMax-M3 only.
+- The 20 confirmatory queries are authored by the same person who
+  tuned the development set; subtle topical overlap may bias the result.
+- The benchmark was held out from selector tuning but not from
+  author-time decisions.
+
+Broader thesis validation requires a larger held-out benchmark
+that does not share author-time decisions with the v1 development
+process.
+
+See `.planning/CONFIRMATORY_RESULTS.md` for the full analysis and
+`.planning/CONFIRMATORY_BENCHMARK_FREEZE.md` for the frozen pipeline
+spec.
+
+### Pre-Phase-N result (Phase M audit, kept for historical reference)
+
+The Phase M audit locked the statistical methodology. The pre-Phase-N
+result on the 10 development queries was:
+
+```
+learned_v3_context_first vs topk_pool_order on development (n=10):
+  mean_delta:   +0.0588
+  95% CI (raw): [0.0, 0.1260]
+  p_value_two_sided: 0.0510
+  Verdict: borderline / suggestive
+```
+
+This was the pre-freeze baseline. The Phase N confirmatory result
+above supersedes it for thesis-validation purposes.
 
 ### Prompt-policy choice (audited, Phase M)
 
