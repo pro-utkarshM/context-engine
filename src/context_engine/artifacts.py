@@ -117,6 +117,13 @@ class QueryMetadata:
     topic: str
     requires_multi_hop: bool
     question_family: str
+    # Additive v1 metadata field introduced in Phase N (corpus expansion).
+    # Allowed values: "development" (the original 10 queries) or
+    # "confirmatory" (the new 20 queries for the held-out test).
+    # Optional to preserve backward compatibility for legacy summary
+    # files that pre-date the split field; downstream code MUST handle
+    # its absence as "unspecified" and not infer the split.
+    split: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "QueryMetadata":
@@ -125,6 +132,7 @@ class QueryMetadata:
             topic=_require_str(data.get("topic"), "metadata.topic"),
             requires_multi_hop=_require_bool(data.get("requires_multi_hop"), "metadata.requires_multi_hop"),
             question_family=_require_str(data.get("question_family"), "metadata.question_family"),
+            split=_optional_str(data.get("split"), "metadata.split"),
         )
 
     def to_dict(self) -> dict[str, Any]:

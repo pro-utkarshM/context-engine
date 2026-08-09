@@ -153,6 +153,8 @@ def _run_outcome_generation(
     artifact_version: str,
     output_path: Path,
     no_resume: bool,
+    policy: str = "context_first",
+    adaptive_threshold: int = 2,
 ) -> None:
     """Shell out to generate_model_outcomes.py for one replication."""
     cmd: list[str] = [
@@ -171,10 +173,10 @@ def _run_outcome_generation(
         cmd.extend(["--context-sets", context_sets])
     if no_resume:
         cmd.append("--no-resume")
-    if args.policy != "context_first":
-        cmd.extend(["--policy", args.policy])
-    if args.adaptive_threshold != 2:
-        cmd.extend(["--adaptive-threshold", str(args.adaptive_threshold)])
+    if policy != "context_first":
+        cmd.extend(["--policy", policy])
+    if adaptive_threshold != 2:
+        cmd.extend(["--adaptive-threshold", str(adaptive_threshold)])
 
     result = subprocess.run(cmd, env={"PYTHONPATH": "src", **__import__("os").environ})
     if result.returncode != 0:
@@ -244,6 +246,8 @@ def main() -> int:
             artifact_version=config.artifact_version,
             output_path=output_path,
             no_resume=args.no_resume,
+            policy=args.policy,
+            adaptive_threshold=args.adaptive_threshold,
         )
 
     # 2. Load all runs back into memory.
