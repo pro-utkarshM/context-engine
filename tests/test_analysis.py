@@ -220,3 +220,127 @@ def test_per_set_rows_are_sorted_and_complete() -> None:
     assert [row.set_id for row in rows] == ["s1", "s2"]
     assert rows[0].distractor_types == []
     assert rows[1].distractor_types == ["stale"]
+
+
+def _build_replication_summary():
+    """Build a ReplicationSummary with 3 runs of 5 strategies × 4 queries."""
+    from context_engine.replications import summarize_replications
+
+    strategies = ("gold_only", "shuffled_order", "gold_plus_distractors", "topk_pool_order", "minimal_support")
+    runs = []
+    for run_seed in (0.10, 0.12, 0.08):
+        context_sets = []
+        outcomes = []
+        for strategy in strategies:
+            for i in range(4):
+                score = min(1.0, max(0.0, run_seed + (0.05 * i) + (0.02 if strategy == "gold_plus_distractors" else 0.0)))
+                set_id = f"q{i}_{strategy}"
+                context_sets.append(_context_set(set_id, f"q{i}", strategy))
+                outcomes.append(_outcome(set_id, f"q{i}", score, score, score))
+        runs.append((context_sets, outcomes))
+    return summarize_replications(
+        runs,
+        experiment_name="exp",
+        runner="minimax",
+        model_name="MiniMax-M3",
+        artifact_version="v1",
+        seed=0,
+    )
+
+
+def test_render_json_report_includes_replication_summary_when_provided():
+    summary = _build_replication_summary()
+    raw = render_json_report(
+        context_sets=[_context_set("s1", "q1", "gold_only")],
+        outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+        replication_summary=summary,
+    )
+    payload = json.loads(raw)
+    assert "replication_summary" in payload
+    assert payload["replication_summary"]["n_runs"] == 3
+    assert len(payload["replication_summary"]["strategies"]) == 5
+    entry = payload["replication_summary"]["strategies"][0]
+    assert "ci_low" in entry["run_mean_summary"]
+    assert "ci_high" in entry["run_mean_summary"]
+    assert entry["run_mean_summary"]["ci_low"] < entry["run_mean_summary"]["mean"]
+    assert entry["run_mean_summary"]["ci_high"] > entry["run_mean_summary"]["mean"]
+
+
+def test_render_json_report_omits_replication_summary_when_not_provided():
+    raw = render_json_report(
+        context_sets=[_context_set("s1", "q1", "gold_only")],
+        outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+    )
+    payload = json.loads(raw)
+    assert "replication_summary" not in payload
+
+
+def test_render_markdown_report_includes_replication_ci_table():
+    summary = _build_replication_summary()
+    md = render_markdown_report(
+        context_sets=[_context_set("s1", "q1", "gold_only")],
+        outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+        replication_summary=summary,
+    )
+    assert "## Replication Confidence Intervals" in md
+    assert "ci_low" in md
+    assert "ci_high" in md
+    assert "reliability" in md
+    assert "gold_only" in md
+    assert "shuffled_order" in md
+
+
+def test_render_markdown_report_includes_pool_comparison_when_paired_present():
+    summary = _build_replication_summary()
+    from context_engine.replications import paired_summary
+
+    left = (
+        [_context_set(f"q{i}_gold_only", f"q{i}", "gold_only") for i in range(4)],
+        [_outcome(f"q{i}_gold_only", f"q{i}", 0.7, 0.7, 0.7) for i in range(4)],
+    )
+    right = (
+        [_context_set(f"q{i}_gold_only", f"q{i}", "gold_only") for i in range(4)],
+        [_outcome(f"q{i}_gold_only", f"q{i}", 0.5, 0.5, 0.5) for i in range(4)],
+    )
+    pairs = paired_summary([left], [right], left_pool_source="auto", right_pool_source="canonical", seed=0)
+    summary = summary.with_paired(pairs)
+
+    md = render_markdown_report(
+        context_sets=[_context_set("s1", "q1", "gold_only")],
+        outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+        replication_summary=summary,
+    )
+    assert "## Pool Comparison" in md
+    assert "auto - canonical" in md
+    assert "delta" in md
+    assert "ci_low" in md
+    assert "ci_high" in md
+
+
+def test_render_markdown_report_omits_replication_section_when_not_provided():
+    md = render_markdown_report(
+        context_sets=[_context_set("s1", "q1", "gold_only")],
+        outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+    )
+    assert "Replication Confidence Intervals" not in md
+    assert "Pool Comparison" not in md
+
+
+def test_replication_json_shape_is_additive_to_existing_report():
+    """Adding the replication section should not drop any existing section."""
+    summary = _build_replication_summary()
+    base_payload = json.loads(
+        render_json_report(
+            context_sets=[_context_set("s1", "q1", "gold_only")],
+            outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+        )
+    )
+    full_payload = json.loads(
+        render_json_report(
+            context_sets=[_context_set("s1", "q1", "gold_only")],
+            outcomes=[_outcome("s1", "q1", 0.7, 0.7, 0.7)],
+            replication_summary=summary,
+        )
+    )
+    assert set(base_payload.keys()) <= set(full_payload.keys())
+    assert "replication_summary" in full_payload

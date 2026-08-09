@@ -63,8 +63,21 @@ from .marginal_impact import (
     compute_marginal_impact,
     evaluate_marginal_impact,
 )
-from .retrieval import BM25Retriever, RetrievalResult, Retriever, tokenize
 from .model_outcomes import evaluate_with_runner
+from .replications import (
+    ReplicationPairedDelta,
+    ReplicationStrategySummary,
+    ReplicationSummary,
+    paired_summary,
+    summarize_replications,
+)
+from .retrieval import BM25Retriever, RetrievalResult, Retriever, tokenize
+from .stats import (
+    DistributionSummary,
+    PairedDeltaSummary,
+    summarize_distribution,
+    summarize_paired_delta,
+)
 from .prompting import PromptPayload, assemble_prompt
 from .runner import (
     MINIMAX_DEFAULT_MODEL,

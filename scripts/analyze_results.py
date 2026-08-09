@@ -21,6 +21,7 @@ from context_engine.analysis import (
 from context_engine.artifacts import ContextSet, MarginalImpact, Outcome, Query
 from context_engine.config import add_config_args, config_from_args, resolved_artifact_path
 from context_engine.io import load_jsonl
+from context_engine.replications import ReplicationSummary
 
 
 FORMATS = ("text", "json", "csv", "md")
@@ -61,6 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--out",
         default=None,
         help="Optional output path. Default: stdout.",
+    )
+    parser.add_argument(
+        "--replications-summary",
+        default=None,
+        help="Optional replication-summary JSONL filename under dataset_dir. "
+        "When provided, the JSON / Markdown reports include a per-strategy "
+        "bootstrap CI section and a paired pool-comparison section "
+        "(if the summary carries paired deltas).",
     )
     return parser
 
@@ -118,6 +127,60 @@ def main() -> int:
         queries_filename=args.queries,
     )
 
+    replication_summary: ReplicationSummary | None = None
+    if args.replications_summary:
+        summary_path = config.dataset_dir / args.replications_summary
+        rows = load_jsonl(summary_path)
+        if not rows:
+            raise ValueError(f"replications summary at {summary_path} is empty")
+        # Round-trip through the dataclass to normalize types.
+        from context_engine.stats import DistributionSummary, PairedDeltaSummary
+        from context_engine.replications import (
+            ReplicationPairedDelta,
+            ReplicationStrategySummary,
+        )
+
+        summary_row = rows[0]
+        strategies: list[ReplicationStrategySummary] = []
+        for entry in summary_row.get("strategies", []):
+            rms = DistributionSummary(**entry["run_mean_summary"])
+            wqs = DistributionSummary(**entry["within_run_query_summary"])
+            strategies.append(
+                ReplicationStrategySummary(
+                    strategy=entry["strategy"],
+                    n_runs=entry["n_runs"],
+                    n_queries_per_run=entry["n_queries_per_run"],
+                    run_means=entry["run_means"],
+                    run_mean_summary=rms,
+                    within_run_query_means=entry["within_run_query_means"],
+                    within_run_query_summary=wqs,
+                )
+            )
+        paired: list[ReplicationPairedDelta] = []
+        for entry in summary_row.get("paired", []):
+            ds = PairedDeltaSummary(**entry["delta_summary"])
+            paired.append(
+                ReplicationPairedDelta(
+                    strategy=entry["strategy"],
+                    n_queries=entry["n_queries"],
+                    left_pool_source=entry["left_pool_source"],
+                    right_pool_source=entry["right_pool_source"],
+                    delta_summary=ds,
+                )
+            )
+        replication_summary = ReplicationSummary(
+            experiment_name=summary_row["experiment_name"],
+            runner=summary_row["runner"],
+            model_name=summary_row["model_name"],
+            artifact_version=summary_row["artifact_version"],
+            n_runs=summary_row["n_runs"],
+            n_resamples=summary_row["n_resamples"],
+            ci_level=summary_row["ci_level"],
+            seed=summary_row["seed"],
+            strategies=strategies,
+            paired=paired,
+        )
+
     if args.format == "text":
         report = render_text_report(context_sets, outcomes)
     elif args.format == "json":
@@ -126,6 +189,7 @@ def main() -> int:
             outcomes,
             marginal_impacts=marginal_impacts or None,
             queries_by_id=queries_by_id or None,
+            replication_summary=replication_summary,
         )
     elif args.format == "csv":
         report = render_csv_per_query(context_sets, outcomes)
@@ -135,6 +199,7 @@ def main() -> int:
             outcomes,
             marginal_impacts=marginal_impacts or None,
             queries_by_id=queries_by_id or None,
+            replication_summary=replication_summary,
         )
 
     if args.out:
