@@ -53,8 +53,12 @@ from .learned_selector import (
     SelectedChunk,
     build_learned_context_set,
     build_learned_context_sets,
+    build_learned_context_sets_v2,
     estimate_chunk_utility,
+    estimate_chunk_utility_from_marginal_impact,
+    estimate_combined_utility,
     select_with_budget,
+    select_with_negative_tiebreak,
 )
 from .marginal_impact import (
     MarginalImpactError,
