@@ -71,7 +71,7 @@ from .replications import (
     paired_summary,
     summarize_replications,
 )
-from .retrieval import BM25ExactMatchRetriever, BM25Retriever, RetrievalResult, Retriever, tokenize
+from .retrieval import BM25ExactMatchRetriever, BM25Retriever, RandomRetriever, RetrievalResult, Retriever, tokenize
 from .stats import (
     DistributionSummary,
     PairedDeltaSummary,
@@ -94,6 +94,7 @@ __all__ = [
     "BenchmarkDataset",
     "BM25ExactMatchRetriever",
     "BM25Retriever",
+    "RandomRetriever",
     "CandidatePool",
     "ChunkMetadata",
     "ChunkUtility",

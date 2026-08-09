@@ -28,6 +28,7 @@ Both are pure stdlib, deterministic, and indexed at corpus load time.
 from __future__ import annotations
 
 import math
+import random
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -323,4 +324,68 @@ class BM25ExactMatchRetriever:
                 retriever_name=self.name,
             )
             for chunk_id, combined_score, _ in top
+        ]
+
+
+
+@dataclass(slots=True)
+class RandomRetriever:
+    """Random-pool retriever — uniform random sampling without replacement.
+
+    Returns ``pool_size`` chunks uniformly at random from the indexed
+    corpus, optionally pre-filtered by metadata. The output is
+    deterministic given a seed, but the underlying signal is "no
+    signal" — the retriever does not score against the query.
+
+    Use as a baseline: if a candidate pool builder + strategy pipeline
+    performs no better with this retriever than with BM25, the
+    downstream selection is not gaining anything from retrieval.
+
+    The Protocol compliance is intentional: a useless retriever is
+    still a valid retriever under the contract. ``#13`` ships this
+    as the third option behind ``bm25`` and ``bm25_exact``.
+    """
+
+    name: str = "random"
+    seed: int = 0
+    _chunks_by_id: dict[str, CorpusChunk] = field(default_factory=dict)
+
+    def index(self, chunks: Iterable[CorpusChunk]) -> None:
+        chunk_list = list(chunks)
+        self._chunks_by_id = {chunk.chunk_id: chunk for chunk in chunk_list}
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        pool_size: int,
+        filter_metadata: Mapping[str, object] | None = None,
+    ) -> list[RetrievalResult]:
+        if pool_size <= 0:
+            return []
+        if not self._chunks_by_id:
+            raise ValueError("RandomRetriever.retrieve called before index()")
+
+        candidates = [
+            chunk
+            for chunk in self._chunks_by_id.values()
+            if _metadata_matches(chunk.metadata, filter_metadata)
+        ]
+        if not candidates:
+            return []
+
+        # Deterministic: seeded Random picks the same indices for the
+        # same seed, query, and pool_size. The query parameter is
+        # unused (it appears in the Protocol signature).
+        rng = random.Random(self.seed + hash(query))
+        selected = rng.sample(candidates, k=min(pool_size, len(candidates)))
+        # Sort by chunk_id for stable ordering of the returned list.
+        selected.sort(key=lambda chunk: chunk.chunk_id)
+        return [
+            RetrievalResult(
+                chunk_id=chunk.chunk_id,
+                score=0.0,  # random has no query-relative score
+                retriever_name=self.name,
+            )
+            for chunk in selected
         ]

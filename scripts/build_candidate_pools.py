@@ -32,7 +32,63 @@ from context_engine.config import (
     resolved_artifact_path,
 )
 from context_engine.io import load_jsonl, write_jsonl
-from context_engine.retrieval import BM25ExactMatchRetriever, BM25Retriever
+from context_engine.retrieval import (
+    BM25ExactMatchRetriever,
+    BM25Retriever,
+    RandomRetriever,
+    Retriever,
+)
+
+
+def _load_retriever_from_module(spec: str) -> Retriever:
+    """Load a retriever class from a ``<module>:<ClassName>`` spec.
+
+    Resolves the module via ``importlib.import_module`` and pulls the
+    named attribute. The class is instantiated with no arguments; if
+    the contributor's class needs configuration, they should provide
+    a no-arg constructor that picks up env vars / config files / etc.
+
+    Validation:
+      - spec must contain a single ``:`` separator
+      - the resolved attribute must be a class with the Retriever
+        Protocol shape (name + index + retrieve)
+      - instantiation must succeed with no arguments
+    """
+    import importlib
+
+    if ":" not in spec:
+        raise SystemExit(
+            f"--retriever-module expected '<module>:<ClassName>'; got {spec!r}"
+        )
+    module_name, _, class_name = spec.partition(":")
+    module_name = module_name.strip()
+    class_name = class_name.strip()
+    if not module_name or not class_name:
+        raise SystemExit(
+            f"--retriever-module expected '<module>:<ClassName>'; got {spec!r}"
+        )
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise SystemExit(f"--retriever-module: cannot import {module_name!r}: {exc}")
+    cls = getattr(module, class_name, None)
+    if cls is None:
+        raise SystemExit(
+            f"--retriever-module: {module_name!r} has no attribute {class_name!r}"
+        )
+    for required in ("name", "index", "retrieve"):
+        if not hasattr(cls, required):
+            raise SystemExit(
+                f"--retriever-module: {class_name!r} missing Protocol attribute {required!r}"
+            )
+    try:
+        instance = cls()
+    except TypeError as exc:
+        raise SystemExit(
+            f"--retriever-module: {class_name!r}() constructor raised: {exc}. "
+            "The class must be instantiable with no arguments."
+        )
+    return instance
 
 
 DEFAULT_POOL_SIZE = 5
@@ -70,10 +126,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--retriever",
-        choices=("bm25", "bm25_exact"),
-        default="bm25",
+        choices=("bm25", "bm25_exact", "random"),
+        default=None,
         help="Retriever to use. Default: bm25. "
-        "bm25_exact is a hybrid BM25 + exact-phrase rerank.",
+        "bm25_exact is a hybrid BM25 + exact-phrase rerank. "
+        "random is a uniform-random no-signal baseline (used to validate "
+        "the extension mechanism in #13). Mutually exclusive with --retriever-module.",
+    )
+    parser.add_argument(
+        "--retriever-module",
+        default=None,
+        help="Custom retriever via '<module>:<ClassName>'. Lets contributors "
+        "register a custom retriever at runtime without modifying "
+        "scripts/build_candidate_pools.py. The class must implement the "
+        "Retriever Protocol (have index() and retrieve() methods, and a "
+        "name attribute). Mutually exclusive with --retriever.",
     )
     parser.add_argument(
         "--output",
@@ -162,10 +229,19 @@ def main() -> int:
     ]
     chunks_by_id = {chunk.chunk_id: chunk for chunk in corpus_chunks}
 
-    if args.retriever == "bm25":
+    if args.retriever_module and args.retriever is not None:
+        # Both flags explicitly set => ambiguous dispatch.
+        raise SystemExit(
+            "--retriever-module is mutually exclusive with --retriever"
+        )
+    if args.retriever_module:
+        retriever = _load_retriever_from_module(args.retriever_module)
+    elif args.retriever is None or args.retriever == "bm25":
         retriever = BM25Retriever()
     elif args.retriever == "bm25_exact":
         retriever = BM25ExactMatchRetriever()
+    elif args.retriever == "random":
+        retriever = RandomRetriever()
     else:
         raise SystemExit(f"unknown retriever: {args.retriever}")
     retriever.index(corpus_chunks)
@@ -190,9 +266,10 @@ def main() -> int:
         else resolved_artifact_path(config, "candidate_pools")
     )
     write_jsonl(target, [pool.to_dict() for pool in pools])
+    retriever_label = args.retriever_module or retriever.name
     print(
         f"wrote {len(pools)} candidate pools "
-        f"(pool_size={args.pool_size}, retriever={args.retriever}) -> {target}"
+        f"(pool_size={args.pool_size}, retriever={retriever_label}) -> {target}"
     )
     return 0
 
