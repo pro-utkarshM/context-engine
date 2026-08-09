@@ -66,6 +66,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Skip pending sets until this set_id is reached, then continue from there.",
     )
+    parser.add_argument(
+        "--policy",
+        default="context_first",
+        choices=("question_first", "context_first", "adaptive_by_chunk_count"),
+        help="Prompt presentation policy. Default: context_first.",
+    )
+    parser.add_argument(
+        "--adaptive-threshold",
+        type=int,
+        default=2,
+        help="Chunk-count threshold for the adaptive policy. Default: 2.",
+    )
     return parser
 
 
@@ -176,6 +188,8 @@ def main() -> int:
             weights=config.scoring_weights,
             evaluator_version=config.evaluator_version,
             max_token_budget=config.token_budget,
+            prompt_policy=args.policy,
+            adaptive_threshold=args.adaptive_threshold,
         ).to_dict()
         outcomes.append(outcome)
         write_jsonl(target, outcomes)
