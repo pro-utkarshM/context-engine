@@ -6,3 +6,7 @@ dist/
 build/
 *.egg-info/
 .planning/
+
+# Local-only files (matches the project's "no secrets in repo" stance)
+.codex
+.env
