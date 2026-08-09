@@ -87,6 +87,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Confidence level for the bootstrap CI. Default: 0.95.",
     )
     parser.add_argument(
+        "--policy",
+        default="context_first",
+        choices=("question_first", "context_first", "adaptive_by_chunk_count"),
+        help="Prompt presentation policy. Default: context_first.",
+    )
+    parser.add_argument(
+        "--adaptive-threshold",
+        type=int,
+        default=2,
+        help="Chunk-count threshold for the adaptive policy. Default: 2.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=0,
@@ -159,6 +171,10 @@ def _run_outcome_generation(
         cmd.extend(["--context-sets", context_sets])
     if no_resume:
         cmd.append("--no-resume")
+    if args.policy != "context_first":
+        cmd.extend(["--policy", args.policy])
+    if args.adaptive_threshold != 2:
+        cmd.extend(["--adaptive-threshold", str(args.adaptive_threshold)])
 
     result = subprocess.run(cmd, env={"PYTHONPATH": "src", **__import__("os").environ})
     if result.returncode != 0:

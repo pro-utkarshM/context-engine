@@ -19,8 +19,23 @@ def evaluate_with_runner(
     weights: ScoringWeights = ScoringWeights(),
     evaluator_version: str = "eval_v1_model_runner",
     max_token_budget: int = 1500,
+    prompt_policy: str = "context_first",
+    adaptive_threshold: int = 2,
 ) -> Outcome:
-    payload = assemble_prompt(query=query, context_set=context_set, chunks_by_id=chunks_by_id)
+    """Run the model and return the scored outcome.
+
+    ``prompt_policy`` selects one of the entries in POLICY_REGISTRY. The
+    default is ``context_first`` (the r4 baseline). ``adaptive_threshold``
+    is the chunk-count threshold for the adaptive policy.
+    """
+
+    payload = assemble_prompt(
+        query=query,
+        context_set=context_set,
+        chunks_by_id=chunks_by_id,
+        policy=prompt_policy,
+        adaptive_threshold=adaptive_threshold,
+    )
     response = runner.run(payload, model_name=model_name)
 
     correctness = score_correctness(query, response.answer)

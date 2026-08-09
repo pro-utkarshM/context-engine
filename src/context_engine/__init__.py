@@ -82,7 +82,14 @@ from .stats import (
     summarize_distribution,
     summarize_paired_delta,
 )
-from .prompting import PromptPayload, assemble_prompt
+from .paired_query import PairedQueryDeltaSummary, paired_query_summary
+from .prompting import (
+    ADAPTIVE_QUESTION_FIRST_CHUNK_LIMIT,
+    POLICY_REGISTRY,
+    PromptPayload,
+    assemble_prompt,
+    policy_for_chunk_count,
+)
 from .runner import (
     MINIMAX_DEFAULT_MODEL,
     MiniMaxResponsesRunner,
@@ -116,8 +123,11 @@ __all__ = [
     "OpenAIResponsesRunner",
     "Operation",
     "Outcome",
+    "ADAPTIVE_QUESTION_FIRST_CHUNK_LIMIT",
+    "POLICY_REGISTRY",
     "PerSetRow",
     "PromptPayload",
+    "policy_for_chunk_count",
     "Query",
     "QueryBestResult",
     "QueryMetadata",
