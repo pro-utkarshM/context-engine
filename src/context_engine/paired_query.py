@@ -13,15 +13,35 @@ This is the "right" unit for comparing strategies on the v1 corpus:
 - Repetitions reduce within-query model noise; they do not add
   independent evidence.
 
-The legacy ``stats.summarize_paired_delta`` remains untouched and is
-exposed for single-run paired comparisons (e.g. golden baseline vs
-auto pool, where we do not have multiple runs). This module wraps it
+The legacy ``stats.summarize_paired_delta`` remains in the stats module
+and is exposed for single-run paired comparisons (e.g. golden baseline
+vs auto pool, where we do not have multiple runs). This module wraps it
 with the per-query mean aggregation needed for multi-run analysis.
 
 Naming: ``PairedQueryDeltaSummary`` is the multi-run analog of
 ``PairedDeltaSummary``. The two are deliberately distinct types so
 callers cannot accidentally conflate single-run and multi-run
 comparisons.
+
+## p-value terminology
+
+The bootstrap significance is reported as two explicit fields:
+
+- ``p_value_one_sided``: ``P(bootstrap_delta has sign disagreeing with
+  observed)``. For a positive observed effect this is
+  ``P(bootstrap_delta <= 0)``. Floored at ``1/n_resamples``.
+- ``p_value_two_sided``: ``min(1.0, 2 * min(p_lower, p_upper))`` where
+  ``p_lower`` and ``p_upper`` are the lower and upper one-sided tail
+  probabilities. This is the value to compare against a two-sided
+  significance threshold.
+
+## Rounding policy
+
+The CI bounds and the mean delta are returned at full float precision
+so that the raw quantile can be inspected (e.g. to determine whether
+the CI lower bound is exactly zero vs slightly positive). A separate
+``to_dict`` method exposes a rounded display form for human-readable
+reports, alongside the raw values.
 """
 
 from __future__ import annotations
@@ -71,6 +91,11 @@ class PairedQueryDeltaSummary:
     per_query_raw_right: Mapping[str, Sequence[float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """JSON-safe representation. CI bounds are kept at full float
+        precision (no rounding) so the raw quantile is preserved.
+        Use ``ci_low`` / ``ci_high`` directly to inspect the
+        unrounded boundary."""
+
         return {
             "left_label": self.left_label,
             "right_label": self.right_label,
@@ -79,20 +104,21 @@ class PairedQueryDeltaSummary:
             "mean_left": round(self.mean_left, 6),
             "mean_right": round(self.mean_right, 6),
             "delta_summary": {
-                "mean_delta": round(self.delta_summary.mean_delta, 6),
-                "std_delta": round(self.delta_summary.std_delta, 6),
-                "ci_low": round(self.delta_summary.ci_low, 6),
-                "ci_high": round(self.delta_summary.ci_high, 6),
-                "ci_level": round(self.delta_summary.ci_level, 6),
-                "p_value_two_sided": round(self.delta_summary.p_value_two_sided, 6),
+                "mean_delta": self.delta_summary.mean_delta,
+                "std_delta": self.delta_summary.std_delta,
+                "ci_low": self.delta_summary.ci_low,
+                "ci_high": self.delta_summary.ci_high,
+                "ci_level": self.delta_summary.ci_level,
+                "p_value_one_sided": self.delta_summary.p_value_one_sided,
+                "p_value_two_sided": self.delta_summary.p_value_two_sided,
                 "n_resamples": self.delta_summary.n_resamples,
                 "seed": self.delta_summary.seed,
             },
             "per_query": {
                 qid: {
-                    "left_mean": round(self.per_query_left[qid], 6),
-                    "right_mean": round(self.per_query_right[qid], 6),
-                    "delta": round(self.per_query_deltas[qid], 6),
+                    "left_mean": self.per_query_left[qid],
+                    "right_mean": self.per_query_right[qid],
+                    "delta": self.per_query_deltas[qid],
                 }
                 for qid in sorted(self.per_query_left)
             },

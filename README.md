@@ -91,44 +91,55 @@ The v1 benchmark has been built and validated. The current state is:
 - **5 canonical strategies** (gold_only, gold_plus_distractors, minimal_support, shuffled_order, topk_pool_order) plus the **learned_v3** estimator.
 - **3 prompt policies** (always_question_first, always_context_first, adaptive_by_chunk_count).
 
-### Thesis-validation status (audited)
+### Thesis-validation status (audited, Phase M)
 
-The audit-grade paired query comparison (per-query mean, n=10, bootstrap 2000 rep, seed=0):
+The audit-grade paired query comparison (per-query mean, n_queries = 10
+independent, 5 reps per query, bootstrap 2000 rep, seed 0):
 
-| Comparison | delta | 95% CI | p | Verdict |
-|---|---:|---|---:|---|
-| learned_v3_context_first vs topk_pool_order | +0.0588 | [+0.0000, +0.1260] | 0.0255 | **provisional validated** |
-| learned_v3_context_first vs gold_plus_distractors | +0.0108 | [-0.0314, +0.0703] | 0.3515 | provisional in trend |
-| learned_v3_context_first vs gold_only | +0.0474 | [-0.0124, +0.1402] | 0.1260 | provisional in trend |
-| learned_v3_context_first vs minimal_support | -0.0030 | [-0.0288, +0.0312] | 0.3575 | tied |
-| learned_v3_context_first vs shuffled_order | +0.0168 | [-0.0168, +0.0588] | 0.2865 | provisional in trend |
+Sign convention: `delta = learned_v3_context_first - canonical_strategy`.
+Positive = learned wins.
+
+| Comparison | delta | 95% CI (raw) | p_one_sided | p_two_sided | Verdict |
+|---|---:|---|---:|---:|---|
+| learned_v3_context_first vs topk_pool_order | +0.0588 | [+0.0000, +0.1260] / (raw: 0.0, 0.126) | 0.0255 | 0.0510 | **borderline / suggestive** |
+| learned_v3_context_first vs gold_plus_distractors (oracle-informed) | +0.0108 | [-0.0314, +0.0703] | 0.3515 | 0.7030 | inconclusive |
+| learned_v3_context_first vs gold_only | +0.0474 | [-0.0124, +0.1402] | 0.1260 | 0.2520 | inconclusive |
+| learned_v3_context_first vs minimal_support | -0.0030 | [-0.0288, +0.0312] | 0.3575 | 0.7150 | inconclusive |
+| learned_v3_context_first vs shuffled_order | +0.0168 | [-0.0168, +0.0588] | 0.2865 | 0.5730 | inconclusive |
 
 **Reading**:
 
-- The learned selector **provisional validated** (5% level) against
-  the static retrieval baseline (`topk_pool_order`). The CI lower bound
-  is exactly zero (to 4 decimals), so the verdict is "provisional
-  validated at the borderline of 95% significance".
+- The learned selector shows **borderline / suggestive** improvement
+  over the canonical static baseline (`topk_pool_order`) on the v1
+  development corpus. The CI lower bound is exactly 0.0 (not
+  strictly positive), so the CI does NOT exclude zero. The two-sided
+  p-value is 0.0510 — just above the 5% threshold.
 - The learned selector is **competitive** with the oracle-informed
   reference (`gold_plus_distractors`) — the CI crosses 0, so we
   cannot reject the null of no difference.
-- The thesis is **NOT yet formally validated**; the 10-query
-  development corpus is too small to make a broad claim. The
-  confirmatory test is the ~30-query expansion planned for after the
-  policy is frozen.
+- The thesis is **NOT yet formally validated.** The current verdict
+  is "borderline / suggestive" on the v1 development corpus. The
+  confirmatory test is the ~30-query expansion.
 
-### Prompt-policy choice
+### Prompt-policy choice (audited, Phase M)
 
-The three-policy ablation showed:
+The three-policy ablation (per-strategy, n_queries = 10) showed:
 
-- For **single-chunk contexts**, Question-first is significantly
-  better than Context-first (delta = +0.084 favoring Q-first, p < 0.001).
-- For **multi-chunk contexts**, Context-first is marginally better
-  than Question-first (delta = +0.011 favoring C-first, p = 0.20, not
-  significant).
-- The **adaptive policy** (Q-first for `chunk_count <= 2`, C-first
-  otherwise) is dominated: it picks the best of both worlds on the
-  development set.
+- For **single-chunk contexts** (gold_only, 1 chunk), Question-first
+  is reliably better than Context-first: delta = -0.0840 favoring
+  Q-first, 95% CI [-0.1596, -0.0252], p_value_two_sided = 0.0000.
+- For **multi-chunk contexts**, the per-strategy comparisons are
+  inconclusive at the 5% level:
+  - gold_plus_distractors: delta = -0.0000, p_value_two_sided = 0.9000
+  - topk_pool_order: delta = -0.0420, p_value_two_sided = 0.2300
+  - learned_v3: delta = +0.0084, p_value_two_sided = 0.5460
+- The across-strategy aggregation (n_queries = 10, one value per
+  query averaged across the 3 Group-B strategies) is inconclusive:
+  delta = -0.0112, p_value_two_sided = 0.4980.
+
+The **adaptive policy** (Q-first for `chunk_count <= 2`, C-first
+otherwise) is justified by the strong 1-chunk evidence but NOT by
+the 3+ chunk evidence (which is inconclusive on v1).
 
 The adaptive policy is **NOT yet the default** — it is the candidate
 for the prompt policy freeze, pending the confirmatory test on the
@@ -138,11 +149,13 @@ for the prompt policy freeze, pending the confirmatory test on the
 
 The 10-query corpus has been used to develop the per-query marginal
 impact estimator, identify ordering sensitivity, identify prompt-order
-sensitivity, and motivate the adaptive prompt policy. These 10 queries
-are now treated as **development-only**. The confirmatory thesis test
-requires the ~30-query expansion; the current numbers are provisional
-only.
+sensitivity, motivate the adaptive prompt policy, and validate the
+corrected p-value definitions. These 10 queries are now treated as
+**development-only**. The confirmatory thesis test requires the
+~30-query expansion; the current numbers are **borderline /
+suggestive** at best, not formally validated.
 
 See `.planning/STATISTICAL_AUDIT.md` for the audit methodology,
-`.planning/THESIS_VALIDATION.md` for the formal framing, and
-`.planning/R4_PROMPT_ABLATION.md` for the three-policy ablation details.
+`.planning/THESIS_VALIDATION.md` for the formal framing,
+`.planning/R4_PROMPT_ABLATION.md` for the three-policy ablation,
+and `.planning/RESEARCH_FREEZE.md` for the frozen pipeline spec.

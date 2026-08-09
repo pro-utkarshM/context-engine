@@ -4,12 +4,35 @@ For each strategy, averages within-query reps for each policy, then
 compares per-query deltas across policies. The analysis is the audit-
 grade per-query paired delta with bootstrap CI.
 
+## Independent experimental unit
+
+The query is the INDEPENDENT experimental unit. Within a single
+strategy, each query contributes one paired delta per comparison. The
+bootstrap resamples these 10 per-query paired deltas. Repetitions
+within a query reduce model noise but do not add independent
+evidence.
+
+Strategies are NOT independent observations of the same effect. Each
+strategy has its own per-query deltas, but the same underlying query
+appears in multiple strategies. Combining strategies as 30
+independent observations is pseudoreplication.
+
+This script reports:
+
+1. Per-strategy paired-query inference (PRIMARY): 10 paired queries,
+   bootstrap the per-query deltas within each strategy.
+2. Across-strategy query-level aggregation (SECONDARY, optional): for
+   each query q, average the per-query effects across the included
+   strategies to get a single per-query aggregated effect. The
+   bootstrap resamples the 10 per-query aggregated values. The
+   underlying sample size is still n_queries = 10, not
+   n_queries * n_strategies.
+
 Policies:
 - always_question_first: rebuilt from data/processed/policy_q_first
-- always_context_first: rebuilt from data/processed/canon_r4_context_first (r4 baseline)
+- always_context_first: rebuilt from data/processed/canon_r4_context_first
 - adaptive_by_chunk_count: reuses always_question_first for gold_only
-  (since chunk_count=1 <= 2), and always_context_first for everything
-  else (chunk_count >= 3).
+  (chunk_count=1 <= 2), and always_context_first for everything else.
 """
 
 import argparse
@@ -23,11 +46,21 @@ sys.path.insert(0, "src")
 from context_engine.paired_query import paired_query_summary
 
 
-def load_per_query_scores(outcome_dir: Path, *, set_id_suffix: str = None):
+def categorize_verdict(ci_low, ci_high, p_two_sided, alpha=0.05):
+    """Same verdict policy as audit_statistics.py."""
+    if ci_low > 0 and p_two_sided < alpha:
+        return "validated on development benchmark"
+    if ci_high < 0 and p_two_sided < alpha:
+        return "negative direction (comparison reliably wins)"
+    if ci_low > 0 or ci_high < 0 or (ci_low == 0 and p_two_sided < alpha + 0.05) or (ci_high == 0 and p_two_sided < alpha + 0.05):
+        return "borderline / suggestive"
+    return "inconclusive"
+
+
+def load_per_query_scores(outcome_dir, *, set_id_suffix=None):
     """Load outcomes: {query_id: [score, score, ...]}."""
-    per_q: dict[str, list[float]] = defaultdict(list)
+    per_q = defaultdict(list)
     for path in sorted(outcome_dir.glob("outcomes_model_*.jsonl")):
-        # Filter out adaptive-only files (we handle those separately)
         if "adaptive" in path.name:
             continue
         with open(path) as f:
@@ -42,20 +75,15 @@ def load_per_query_scores(outcome_dir: Path, *, set_id_suffix: str = None):
     return per_q
 
 
-def load_per_query_scores_for_strategy(outcome_dir: Path, strategy: str):
+def load_per_query_scores_for_strategy(outcome_dir, strategy):
     """Load outcomes filtered to a specific strategy."""
-    expected_suffix = f"_{strategy}" if strategy != "learned_v3" else "_learned"
+    expected_suffix = "_" + strategy if strategy != "learned_v3" else "_learned"
     return load_per_query_scores(outcome_dir, set_id_suffix=expected_suffix)
 
 
-def load_adaptive_gold_only(outcome_dir: Path):
+def load_adaptive_gold_only(outcome_dir):
     """For gold_only, adaptive == question_first (chunk_count=1 <= 2).
-
-    We use the question_first data here because the adaptive policy
-    produces the same prompt for 1-chunk contexts. The two "separate"
-    runs (question_first and adaptive_by_chunk_count) are independent
-    rep samples, but the prompts are identical, so the comparisons are
-    only meaningful when we use the SAME rep samples.
+    Reuse the question_first data for the same rep samples.
     """
     return load_per_query_scores_for_strategy(Path(outcome_dir), "gold_only")
 
@@ -68,14 +96,11 @@ def main():
     parser.add_argument("--out", default=".planning/PROMPT_POLICY_ABLATION.md")
     args = parser.parse_args()
 
-    # Strategy -> (q_first_dir, context_first_dir, both?)
-    # gold_only, gpd, topk_pool_order: canonical strategies
-    # learned_v3: separate learned_v3 dir
     strategies = [
-        ("gold_only", "canonical", "gold_only"),
-        ("gold_plus_distractors", "canonical", "gold_plus_distractors"),
-        ("topk_pool_order", "canonical", "topk_pool_order"),
-        ("learned_v3", "learned", "learned"),
+        ("gold_only", "canonical"),
+        ("gold_plus_distractors", "canonical"),
+        ("topk_pool_order", "canonical"),
+        ("learned_v3", "learned"),
     ]
 
     out_lines = []
@@ -84,15 +109,15 @@ def main():
     out_lines.append("Three policies tested on the same context sets:")
     out_lines.append("- **always_question_first**: Q before C (the original prompt order)")
     out_lines.append("- **always_context_first**: C before Q (the r4 default)")
-    out_lines.append("- **adaptive_by_chunk_count**: Q-first for ≤2 chunks, C-first otherwise")
+    out_lines.append("- **adaptive_by_chunk_count**: Q-first for <=2 chunks, C-first otherwise")
     out_lines.append("")
     out_lines.append("Per-strategy means (5 reps × 10 queries).")
     out_lines.append("")
-
-    # Compute per-strategy per-policy mean
-    print(f"{'strategy':<25} {'q_first':>10} {'c_first':>10} {'adaptive':>10}")
-    print("-" * 60)
-    for strategy_name, dir_kind, suffix in strategies:
+    out_lines.append("## Per-strategy means (5 reps × 10 queries, n = 10 queries per strategy)")
+    out_lines.append("")
+    out_lines.append("| strategy | q_first | c_first | adaptive |")
+    out_lines.append("|---|---:|---:|---:|")
+    for strategy_name, dir_kind in strategies:
         if dir_kind == "canonical":
             q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), strategy_name)
             c_first = load_per_query_scores_for_strategy(Path(args.context_first_dir), strategy_name)
@@ -100,52 +125,32 @@ def main():
             q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), "learned_v3")
             c_first = load_per_query_scores(Path(args.learned_context_first_dir))
 
-        # Adaptive: gold_only uses question_first (chunk_count=1), others use context_first
         if strategy_name == "gold_only":
             adaptive = load_adaptive_gold_only(Path(args.q_first_dir))
         else:
-            adaptive = c_first  # chunk_count >= 3, so adaptive == context_first
+            adaptive = c_first
 
-        # Compute means
-        q_first_means = [sum(v)/len(v) for v in q_first.values()]
-        c_first_means = [sum(v)/len(v) for v in c_first.values()]
-        adaptive_means = [sum(v)/len(v) for v in adaptive.values()]
+        q_first_means = [sum(v) / len(v) for v in q_first.values()]
+        c_first_means = [sum(v) / len(v) for v in c_first.values()]
+        adaptive_means = [sum(v) / len(v) for v in adaptive.values()]
 
         q_first_mean = sum(q_first_means) / len(q_first_means)
         c_first_mean = sum(c_first_means) / len(c_first_means)
         adaptive_mean = sum(adaptive_means) / len(adaptive_means)
 
-        print(f"{strategy_name:<25} {q_first_mean:>10.4f} {c_first_mean:>10.4f} {adaptive_mean:>10.4f}")
+        out_lines.append("| " + strategy_name + " | " + format(q_first_mean, ".4f") + " | " + format(c_first_mean, ".4f") + " | " + format(adaptive_mean, ".4f") + " |")
 
-        out_lines.append(f"## {strategy_name}")
-        out_lines.append(f"  - question_first: {q_first_mean:.4f}")
-        out_lines.append(f"  - context_first: {c_first_mean:.4f}")
-        out_lines.append(f"  - adaptive: {adaptive_mean:.4f}")
-
-        # Per-query breakdown
-        out_lines.append(f"  - Per-query breakdown:")
-        common_q = sorted(q_first.keys() & c_first.keys() & adaptive.keys())
-        for qid in common_q:
-            q_q = sum(q_first[qid]) / len(q_first[qid])
-            c_q = sum(c_first[qid]) / len(c_first[qid])
-            a_q = sum(adaptive[qid]) / len(adaptive[qid])
-            out_lines.append(f"    - {qid}: q_first={q_q:.4f}, c_first={c_q:.4f}, adaptive={a_q:.4f}")
-        out_lines.append("")
-
-    # Paired comparisons: context_first vs adaptive (which is identical for all but gold_only)
-    # for each strategy:
-    out_lines.append("## Paired Comparisons (Context-first vs Question-first)")
     out_lines.append("")
-    out_lines.append("For each strategy, the per-query delta (context_first - question_first) is computed and bootstrapped.")
-    out_lines.append("Positive delta: context_first improves score.")
+    out_lines.append("## Per-strategy paired-query inference (PRIMARY)")
     out_lines.append("")
+    out_lines.append("For each strategy, bootstrap the per-query deltas (context_first - question_first). Sign convention: positive = context_first better. The independent unit is the query (n = 10).")
+    out_lines.append("")
+    out_lines.append("| strategy | delta | ci_low (raw) | ci_high (raw) | p_one_sided | p_two_sided | verdict |")
+    out_lines.append("|---|---:|---:|---:|---:|---:|---|")
 
-    print()
-    print("=" * 70)
-    print("Paired: context_first - question_first")
-    print("=" * 70)
-    out_lines.append("### context_first - question_first")
-    for strategy_name, dir_kind, suffix in strategies:
+    # Per-strategy inference
+    strategy_results = []
+    for strategy_name, dir_kind in strategies:
         if dir_kind == "canonical":
             q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), strategy_name)
             c_first = load_per_query_scores_for_strategy(Path(args.context_first_dir), strategy_name)
@@ -153,7 +158,6 @@ def main():
             q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), "learned_v3")
             c_first = load_per_query_scores(Path(args.learned_context_first_dir))
 
-        # Rename so c_first is left, q_first is right
         result = paired_query_summary(
             c_first, q_first,
             left_label="context_first",
@@ -161,80 +165,17 @@ def main():
             n_resamples=2000, seed=0,
         )
         ls = result.delta_summary
-        excl = "EXCLUDES 0" if (ls.ci_low > 0 or ls.ci_high < 0) else "INCLUDES 0"
-        print(f"  {strategy_name:<25}: delta={ls.mean_delta:+.4f} CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f}  [{excl}]")
-        out_lines.append(f"  - **{strategy_name}**: delta={ls.mean_delta:+.4f}, CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f} [{excl}]")
+        verdict = categorize_verdict(ls.ci_low, ls.ci_high, ls.p_value_two_sided)
+        out_lines.append("| " + strategy_name + " | " + format(ls.mean_delta, "+.4f") +
+                         " | " + repr(ls.ci_low) + " | " + repr(ls.ci_high) +
+                         " | " + format(ls.p_value_one_sided, ".4f") +
+                         " | " + format(ls.p_value_two_sided, ".4f") +
+                         " | " + verdict + " |")
+        strategy_results.append((strategy_name, result))
 
-    # Now: adaptive vs each of the two extremes
+    # Chunk-count analysis (per-strategy, NO pseudoreplication)
     out_lines.append("")
-    out_lines.append("### adaptive - question_first")
-    print()
-    print("=" * 70)
-    print("Paired: adaptive - question_first")
-    print("=" * 70)
-    for strategy_name, dir_kind, suffix in strategies:
-        if dir_kind == "canonical":
-            q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), strategy_name)
-        else:
-            q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), "learned_v3")
-
-        if strategy_name == "gold_only":
-            adaptive = load_adaptive_gold_only(Path(args.q_first_dir))
-        else:
-            # Adaptive == context_first
-            if dir_kind == "canonical":
-                adaptive = load_per_query_scores_for_strategy(Path(args.context_first_dir), strategy_name)
-            else:
-                adaptive = load_per_query_scores(Path(args.learned_context_first_dir))
-
-        result = paired_query_summary(
-            adaptive, q_first,
-            left_label="adaptive",
-            right_label="question_first",
-            n_resamples=2000, seed=0,
-        )
-        ls = result.delta_summary
-        excl = "EXCLUDES 0" if (ls.ci_low > 0 or ls.ci_high < 0) else "INCLUDES 0"
-        print(f"  {strategy_name:<25}: delta={ls.mean_delta:+.4f} CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f}  [{excl}]")
-        out_lines.append(f"  - **{strategy_name}**: delta={ls.mean_delta:+.4f}, CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f} [{excl}]")
-
-    out_lines.append("")
-    out_lines.append("### adaptive - context_first")
-    print()
-    print("=" * 70)
-    print("Paired: adaptive - context_first")
-    print("=" * 70)
-    for strategy_name, dir_kind, suffix in strategies:
-        if dir_kind == "canonical":
-            c_first = load_per_query_scores_for_strategy(Path(args.context_first_dir), strategy_name)
-        else:
-            c_first = load_per_query_scores(Path(args.learned_context_first_dir))
-
-        if strategy_name == "gold_only":
-            adaptive = load_adaptive_gold_only(Path(args.q_first_dir))
-        else:
-            adaptive = c_first  # tan to context_first
-
-        # Skip - adaptive == context_first for these
-        if strategy_name != "gold_only":
-            out_lines.append(f"  - **{strategy_name}**: adaptive == context_first (chunk_count={3 if strategy_name == 'gold_plus_distractors' else 5})")
-            print(f"  {strategy_name:<25}: adaptive == context_first (skip)")
-            continue
-
-        result = paired_query_summary(
-            adaptive, c_first,
-            left_label="adaptive",
-            right_label="context_first",
-            n_resamples=2000, seed=0,
-        )
-        ls = result.delta_summary
-        excl = "EXCLUDES 0" if (ls.ci_low > 0 or ls.ci_high < 0) else "INCLUDES 0"
-        print(f"  {strategy_name:<25}: delta={ls.mean_delta:+.4f} CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f}  [{excl}]")
-        out_lines.append(f"  - **{strategy_name}**: delta={ls.mean_delta:+.4f}, CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f} [{excl}]")
-
-    # Chunk-count analysis: results grouped by chunk count
-    out_lines.append("")
-    out_lines.append("## Chunk-count Analysis")
+    out_lines.append("## Chunk-count grouping (per-strategy, primary)")
     out_lines.append("")
     out_lines.append("Selected-chunk count per strategy:")
     out_lines.append("- gold_only: 1 chunk per query")
@@ -242,28 +183,101 @@ def main():
     out_lines.append("- topk_pool_order: 5 chunks per query")
     out_lines.append("- learned_v3: 5 chunks per query")
     out_lines.append("")
-    out_lines.append("**Group A (1-2 chunks)**: gold_only → adaptive == question_first")
+    out_lines.append("**Group A (1-2 chunks)**: gold_only only. The per-strategy inference above is the primary analysis.")
     out_lines.append("")
-    out_lines.append("**Group B (3+ chunks)**: gold_plus_distractors, topk_pool_order, learned_v3 → adaptive == context_first")
+    out_lines.append("**Group B (3+ chunks)**: gpd (3 chunks), topk_pool_order (5 chunks), learned_v3 (5 chunks). REPORT PER-STRATEGY only.")
     out_lines.append("")
-
-    # Compute and report Group A and Group B aggregate
-    out_lines.append("### Group A (1-2 chunks): gold_only")
-    out_lines.append("")
-    out_lines.append("For chunk_count <= 2, adaptive == question_first. The full comparison is the gold_only row above.")
-    out_lines.append("")
-
-    out_lines.append("### Group B (3+ chunks): aggregated")
-    out_lines.append("")
-    out_lines.append("For chunk_count >= 3, adaptive == context_first. Aggregate the per-query deltas across gold_plus_distractors, topk_pool_order, and learned_v3.")
-    out_lines.append("")
-
-    # Aggregate deltas across all 3 strategies × 10 queries = 30 paired observations
-    all_c_first = defaultdict(list)
-    all_q_first = defaultdict(list)
-    for strategy_name, dir_kind, suffix in strategies:
+    for strategy_name, result in strategy_results:
         if strategy_name == "gold_only":
-            continue  # skip - in Group A
+            continue
+        ls = result.delta_summary
+        verdict = categorize_verdict(ls.ci_low, ls.ci_high, ls.p_value_two_sided)
+        out_lines.append("- **" + strategy_name + "** (in Group B): delta=" + format(ls.mean_delta, "+.4f") +
+                         ", ci_low=" + repr(ls.ci_low) + ", ci_high=" + repr(ls.ci_high) +
+                         ", p_two=" + format(ls.p_value_two_sided, ".4f") +
+                         ", verdict=" + verdict)
+    out_lines.append("")
+    out_lines.append("> Treating these 3 strategies as 30 independent samples would be pseudoreplication. The query is the independent unit; each strategy contributes 10 per-query observations, not n*10 independent samples.")
+    out_lines.append("")
+
+    # Secondary: across-strategy query-level aggregation
+    out_lines.append("## Across-strategy query-level aggregation (SECONDARY, query-level)")
+    out_lines.append("")
+    out_lines.append("For each query, average the per-query effects across the included strategies to get a single per-query aggregated effect. The bootstrap resamples the 10 per-query aggregated values. The independent sample size is still n_queries = 10, NOT n_queries * n_strategies.")
+    out_lines.append("")
+    out_lines.append("This is a secondary analysis. It is reported because it averages the per-query effects across the strategies that ALL show the same direction (Group B). It should NOT be interpreted as having n = 30 independent samples.")
+    out_lines.append("")
+
+    # Group B: per-query aggregated effect across gpd, topk, learned_v3
+    by_query = defaultdict(dict)
+    common_q = set()
+    for strategy_name, dir_kind in strategies:
+        if strategy_name == "gold_only":
+            continue
+        if dir_kind == "canonical":
+            q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), strategy_name)
+            c_first = load_per_query_scores_for_strategy(Path(args.context_first_dir), strategy_name)
+        else:
+            q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), "learned_v3")
+            c_first = load_per_query_scores(Path(args.learned_context_first_dir))
+        for qid in q_first:
+            if qid in c_first and q_first[qid] and c_first[qid]:
+                by_query[qid][strategy_name] = (
+                    sum(c_first[qid]) / len(c_first[qid]) - sum(q_first[qid]) / len(q_first[qid])
+                )
+        common_q = set(by_query.keys()) if not common_q else (common_q & set(q_first.keys()) & set(c_first.keys()))
+
+    # Build per-query aggregated left/right (just the aggregated delta)
+    agg_deltas = {}
+    for qid in common_q:
+        effects = list(by_query[qid].values())
+        if effects:
+            agg_deltas[qid] = sum(effects) / len(effects)
+
+    # Build paired_query_summary with the aggregated per-query effects
+    # Use the same left/right approach: for each query, the "left" is the
+    # aggregated effect and the "right" is 0 (the null of no effect).
+    # This is a one-sample per-query test with the mean being the per-query
+    # aggregated effect.
+    # 
+    # Wait, this isn't right. paired_query_summary expects paired data.
+    # For the across-strategy aggregation, what we want is the mean of
+    # per-query aggregated effects, with bootstrap CI on that mean.
+    # 
+    # Let me use summarize_paired_delta with left=agg_deltas, right=[0]*n
+    # This gives a one-sample bootstrap on the aggregated effects.
+
+    from context_engine.stats import summarize_paired_delta
+    agg_left = [agg_deltas[qid] for qid in sorted(agg_deltas)]
+    agg_right = [0.0] * len(agg_left)
+    agg_result = summarize_paired_delta(agg_left, agg_right, n_resamples=2000, seed=0)
+    agg_ls = agg_result
+    agg_verdict = categorize_verdict(agg_ls.ci_low, agg_ls.ci_high, agg_ls.p_value_two_sided)
+
+    out_lines.append("### Group B (across-strategy query-level aggregation)")
+    out_lines.append("")
+    out_lines.append("Independent observations: 10 queries (NOT 30). Each per-query value is the MEAN of the per-query effects across the 3 Group-B strategies.")
+    out_lines.append("")
+    out_lines.append("| metric | value |")
+    out_lines.append("|---|---:|")
+    out_lines.append("| n_queries (independent) | " + str(agg_ls.n) + " |")
+    out_lines.append("| mean_delta | " + format(agg_ls.mean_delta, "+.6f") + " |")
+    out_lines.append("| ci_low (raw) | " + repr(agg_ls.ci_low) + " |")
+    out_lines.append("| ci_high (raw) | " + repr(agg_ls.ci_high) + " |")
+    out_lines.append("| ci_low > 0? | " + str(agg_ls.ci_low > 0) + " |")
+    out_lines.append("| p_value_one_sided | " + format(agg_ls.p_value_one_sided, ".4f") + " |")
+    out_lines.append("| p_value_two_sided | " + format(agg_ls.p_value_two_sided, ".4f") + " |")
+    out_lines.append("| verdict | " + agg_verdict + " |")
+    out_lines.append("")
+    out_lines.append("Per-query aggregated effects:")
+    for qid in sorted(agg_deltas):
+        out_lines.append("- " + qid + ": " + format(agg_deltas[qid], "+.6f") + " (mean across gpd, topk, learned_v3)")
+    out_lines.append("")
+
+    # Per-query breakdown for each strategy
+    out_lines.append("## Per-query breakdown (raw, all strategies)")
+    out_lines.append("")
+    for strategy_name, dir_kind in strategies:
         if dir_kind == "canonical":
             q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), strategy_name)
             c_first = load_per_query_scores_for_strategy(Path(args.context_first_dir), strategy_name)
@@ -271,31 +285,41 @@ def main():
             q_first = load_per_query_scores_for_strategy(Path(args.q_first_dir), "learned_v3")
             c_first = load_per_query_scores(Path(args.learned_context_first_dir))
 
-        for qid in q_first:
-            # Tag the queries with strategy to keep them distinct
-            all_q_first[f"{strategy_name}_{qid}"] = q_first[qid]
-            all_c_first[f"{strategy_name}_{qid}"] = c_first[qid]
-
-    result = paired_query_summary(
-        all_c_first, all_q_first,
-        left_label="context_first",
-        right_label="question_first",
-        n_resamples=2000, seed=0,
-    )
-    ls = result.delta_summary
-    excl = "EXCLUDES 0" if (ls.ci_low > 0 or ls.ci_high < 0) else "INCLUDES 0"
-    print()
-    print("=" * 70)
-    print(f"Group B (3+ chunks, aggregated): delta={ls.mean_delta:+.4f} CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f}  [{excl}]")
-    print(f"  n_queries: {ls.n}")
-    out_lines.append(f"  - delta={ls.mean_delta:+.4f}, CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f} [{excl}]")
-    out_lines.append(f"  - n_queries (pooled across strategies): {ls.n}")
-    out_lines.append("")
+        out_lines.append("### " + strategy_name)
+        out_lines.append("")
+        out_lines.append("| query_id | q_first mean | c_first mean | delta (c_first - q_first) |")
+        out_lines.append("|---|---:|---:|---:|")
+        for qid in sorted(set(q_first) & set(c_first)):
+            q_q = sum(q_first[qid]) / len(q_first[qid])
+            c_q = sum(c_first[qid]) / len(c_first[qid])
+            out_lines.append("| " + qid + " | " + format(q_q, ".4f") + " | " + format(c_q, ".4f") + " | " + format(c_q - q_q, "+.4f") + " |")
+        out_lines.append("")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(out_lines))
-    print(f"\nWrote {out}")
+    out.write_text(chr(10).join(out_lines))
+    print("Wrote " + str(out))
+
+    print("")
+    print("=" * 90)
+    print("Per-strategy inference (primary):")
+    print("=" * 90)
+    for strategy_name, result in strategy_results:
+        ls = result.delta_summary
+        verdict = categorize_verdict(ls.ci_low, ls.ci_high, ls.p_value_two_sided)
+        print("  " + strategy_name.ljust(25) + ": delta=" + format(ls.mean_delta, "+.4f") +
+              " CI[" + format(ls.ci_low, "+.4f") + ", " + format(ls.ci_high, "+.4f") + "] " +
+              "p_one=" + format(ls.p_value_one_sided, ".4f") + " p_two=" + format(ls.p_value_two_sided, ".4f") +
+              "  [" + verdict + "]")
+    print("")
+    print("=" * 90)
+    print("Across-strategy Group B aggregation (secondary, query-level):")
+    print("=" * 90)
+    print("  Group B (n_queries = 10): delta=" + format(agg_ls.mean_delta, "+.4f") +
+          " CI[" + format(agg_ls.ci_low, "+.4f") + ", " + format(agg_ls.ci_high, "+.4f") + "] " +
+          "p_one=" + format(agg_ls.p_value_one_sided, ".4f") + " p_two=" + format(agg_ls.p_value_two_sided, ".4f") +
+          "  [" + agg_verdict + "]")
+    print("  Independent observations: 10 (NOT 30).")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,21 @@ Reads the per-run outcome files and produces the audit-grade paired-query
 statistics. The independent experimental unit is the query: we average
 within-query reps, then bootstrap the per-query deltas.
 
+Statistical procedure (pinned in this script):
+
+- Independent experimental unit: query (n = 10).
+- Repetitions per query: 5 (model stochasticity — reduces noise, not
+  independent evidence).
+- Bootstrap unit: per-query paired delta (10 observations).
+- Bootstrap: percentile method, 2000 resamples, seed = 0.
+- p-values:
+  - ``p_value_one_sided`` = share of bootstrap means whose sign disagrees
+    with the observed mean (one-sided tail probability). Floored at
+    ``1/n_resamples``.
+  - ``p_value_two_sided`` = ``min(1.0, 2 * min(p_lower, p_upper))``.
+- CI: 95% central mass of the bootstrap distribution. The raw float
+  values are preserved (no rounding) so the boundary can be inspected.
+
 Inputs:
   - data/processed/learned_v3_context_first/outcomes_model_minimax_learned_v3_v1_run{000..004}.jsonl
   - data/processed/canon_r4_context_first/outcomes_model_minimax_v1_run{000..004}.jsonl
@@ -15,7 +30,6 @@ Output:
 
 import argparse
 import json
-import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -25,7 +39,7 @@ sys.path.insert(0, "src")
 from context_engine.paired_query import paired_query_summary
 
 
-def load_per_query_scores(outcome_dir: Path, *, set_id_suffix: str = None):
+def load_per_query_scores(outcome_dir, *, set_id_suffix=None):
     """Load outcome files and return {query_id: [score, score, ...]} per query.
 
     Only loads files matching the outcome pattern ``outcomes_model_*.jsonl``.
@@ -33,7 +47,7 @@ def load_per_query_scores(outcome_dir: Path, *, set_id_suffix: str = None):
 
     If set_id_suffix is given, include only rows whose set_id ENDS WITH that suffix.
     """
-    per_q: dict[str, list[float]] = defaultdict(list)
+    per_q = defaultdict(list)
     files = sorted(outcome_dir.glob("outcomes_model_*.jsonl"))
     for path in files:
         with open(path) as f:
@@ -48,22 +62,57 @@ def load_per_query_scores(outcome_dir: Path, *, set_id_suffix: str = None):
     return per_q
 
 
-def format_report(result, *, sign_convention: str) -> str:
+def categorize_verdict(ci_low, ci_high, p_two_sided, alpha=0.05):
+    """Return a verdict category based on the CI bounds and p-value.
+
+    Rules:
+      - ``ci_low > 0`` AND ``p_value_two_sided < alpha``:
+        "validated on development benchmark (positive direction)"
+      - ``ci_high < 0`` AND ``p_value_two_sided < alpha``:
+        "negative direction (negative direction reliably established)"
+      - ``ci_low == 0`` OR ``ci_high == 0`` OR ``p_value_two_sided is on the boundary``:
+        "borderline / suggestive"
+      - else: "inconclusive"
+    """
+    if ci_low > 0 and p_two_sided < alpha:
+        return "validated on development benchmark"
+    if ci_high < 0 and p_two_sided < alpha:
+        return "negative direction (comparison reliably wins)"
+    if ci_low > 0 or ci_high < 0 or (ci_low == 0 and p_two_sided < alpha + 0.05) or (ci_high == 0 and p_two_sided < alpha + 0.05):
+        return "borderline / suggestive"
+    return "inconclusive"
+
+
+def format_report(result, *, sign_convention):
+    """Format a single comparison result. CI bounds are reported at full
+    float precision (no rounding) so the boundary is honest.
+
+    The displayed ``+0.0000`` of a 4-decimal rounding is NOT sufficient
+    to determine exclusion; the raw value is reported alongside.
+    """
+    ls = result.delta_summary
     lines = []
-    lines.append(f"== {result.left_label} vs {result.right_label} ==")
-    lines.append(f"  Sign convention: {sign_convention}")
-    lines.append(f"  N queries: {result.n_queries}, reps per query: {result.reps_per_query}")
-    lines.append(f"  Mean left:  {result.mean_left:.4f}")
-    lines.append(f"  Mean right: {result.mean_right:.4f}")
-    lines.append(f"  Mean delta: {result.delta_summary.mean_delta:+.4f}")
-    lines.append(f"  95% bootstrap CI: [{result.delta_summary.ci_low:+.4f}, {result.delta_summary.ci_high:+.4f}]")
-    lines.append(f"  p-value: {result.delta_summary.p_value_two_sided:.4f}")
-    lines.append(f"  Bootstrap: {result.n_resamples} samples, seed={result.seed}")
-    lines.append(f"  Per-query deltas:")
+    lines.append("== " + result.left_label + " vs " + result.right_label + " ==")
+    lines.append("  Sign convention: " + sign_convention)
+    lines.append("  N queries: " + str(result.n_queries) + ", reps per query: " + str(result.reps_per_query))
+    lines.append("  Mean left:  " + format(result.mean_left, ".6f"))
+    lines.append("  Mean right: " + format(result.mean_right, ".6f"))
+    lines.append("  Mean delta: " + format(ls.mean_delta, "+.6f"))
+    lines.append("  95% bootstrap CI (raw floats):")
+    lines.append("    ci_low  = " + repr(ls.ci_low))
+    lines.append("    ci_high = " + repr(ls.ci_high))
+    lines.append("    ci_low > 0? " + str(ls.ci_low > 0))
+    lines.append("    ci_low <= 0? " + str(ls.ci_low <= 0))
+    lines.append("  95% bootstrap CI (display): [" + format(ls.ci_low, "+.4f") + ", " + format(ls.ci_high, "+.4f") + "]")
+    lines.append("  One-sided p-value: " + format(ls.p_value_one_sided, ".6f"))
+    lines.append("  Two-sided p-value: " + format(ls.p_value_two_sided, ".6f"))
+    lines.append("  Bootstrap: " + str(result.n_resamples) + " samples, seed=" + str(result.seed))
+    lines.append("  Verdict: " + categorize_verdict(ls.ci_low, ls.ci_high, ls.p_value_two_sided))
+    lines.append("  Per-query deltas:")
     for qid in sorted(result.per_query_deltas):
         d = result.per_query_deltas[qid]
-        lines.append(f"    {qid}: {d:+.4f}")
-    return "\n".join(lines)
+        lines.append("    " + qid + ": " + format(d, "+.6f"))
+    return chr(10).join(lines)
 
 
 def main():
@@ -78,12 +127,12 @@ def main():
     learned_dir = Path(args.learned_dir)
     canon_dir = Path(args.canon_dir)
     if not learned_dir.is_dir():
-        raise SystemExit(f"learned dir not found: {learned_dir}")
+        raise SystemExit("learned dir not found: " + str(learned_dir))
     if not canon_dir.is_dir():
-        raise SystemExit(f"canon dir not found: {canon_dir}")
+        raise SystemExit("canon dir not found: " + str(canon_dir))
 
     learned = load_per_query_scores(learned_dir)
-    print(f"Loaded learned outcomes: {len(learned)} queries, {sum(len(v) for v in learned.values())} reps total")
+    print("Loaded learned outcomes: " + str(len(learned)) + " queries, " + str(sum(len(v) for v in learned.values())) + " reps total")
 
     strategies = [
         ("topk_pool_order", "topk_pool_order"),
@@ -95,10 +144,10 @@ def main():
 
     results = []
     for canon_strategy, suffix in strategies:
-        canon = load_per_query_scores(canon_dir, set_id_suffix=f"_{suffix}")
-        print(f"Loaded {canon_strategy} outcomes: {len(canon)} queries, {sum(len(v) for v in canon.values())} reps total")
+        canon = load_per_query_scores(canon_dir, set_id_suffix="_" + suffix)
+        print("Loaded " + canon_strategy + " outcomes: " + str(len(canon)) + " queries, " + str(sum(len(v) for v in canon.values())) + " reps total")
         if not canon:
-            print(f"  Skipping {canon_strategy} (no data)")
+            print("  Skipping " + canon_strategy + " (no data)")
             continue
         result = paired_query_summary(
             learned, canon,
@@ -109,22 +158,29 @@ def main():
         )
         results.append((canon_strategy, result))
 
-    # Write report
     out_lines = []
     out_lines.append("# Statistical Audit Results — r4 prompt-ablated comparisons")
     out_lines.append("")
     out_lines.append("**Methodology**:")
-    out_lines.append(f"- Independent experimental unit: query (n = 10)")
-    out_lines.append(f"- Repetitions per query: 5 (model stochasticity)")
-    out_lines.append(f"- Bootstrap unit: per-query paired delta (10 observations)")
-    out_lines.append(f"- Bootstrap: percentile method, {args.n_resamples} resamples, seed = {args.seed}")
-    out_lines.append(f"- p-value: percentile bootstrap (share of bootstrap means with sign disagreeing with observed, floor at 1/n_resamples)")
+    out_lines.append("- Independent experimental unit: query (n_queries = 10)")
+    out_lines.append("- Repetitions per query: 5 (model stochasticity)")
+    out_lines.append("- Bootstrap unit: per-query paired delta (10 observations)")
+    out_lines.append("- Bootstrap: percentile method, " + str(args.n_resamples) + " resamples, seed = " + str(args.seed))
+    out_lines.append("- p_value_one_sided: share of bootstrap means with sign disagreeing with observed, floored at 1/n_resamples")
+    out_lines.append("- p_value_two_sided: min(1.0, 2 * min(p_lower, p_upper))")
     out_lines.append("")
     out_lines.append("**Sign convention**: `delta = mean(left) - mean(right)`. Positive = left wins.")
     out_lines.append("")
+    out_lines.append("**CI rounding policy**: CI bounds are reported at full float precision (no rounding). A 4-decimal display is shown alongside for human readability, but the verdict is keyed off the raw value.")
+    out_lines.append("")
+    out_lines.append("**Verdict language**:")
+    out_lines.append("- `validated on development benchmark`: CI lower bound strictly > 0 AND p_value_two_sided < 0.05")
+    out_lines.append("- `borderline / suggestive`: CI lower bound is exactly 0 (or the boundary case), significance on the boundary")
+    out_lines.append("- `inconclusive`: CI includes 0 materially, no sufficient evidence")
+    out_lines.append("")
     out_lines.append("**Inputs**:")
-    out_lines.append(f"- `learned_v3_context_first`: {learned_dir}")
-    out_lines.append(f"- `canon_r4_context_first`: {canon_dir}")
+    out_lines.append("- `learned_v3_context_first`: " + str(learned_dir))
+    out_lines.append("- `canon_r4_context_first`: " + str(canon_dir))
     out_lines.append("")
     for canon_strategy, result in results:
         out_lines.append(format_report(result, sign_convention="left - right; positive = learned wins"))
@@ -132,17 +188,21 @@ def main():
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(out_lines))
-    print(f"\nWrote {out_path}")
+    out_path.write_text(chr(10).join(out_lines))
+    print("")
+    print("Wrote " + str(out_path))
 
-    print()
-    print("=" * 70)
+    print("")
+    print("=" * 90)
     print("Summary (learned_v3_context_first vs canonical):")
-    print("=" * 70)
+    print("=" * 90)
     for canon_strategy, result in results:
         ls = result.delta_summary
-        excl = "EXCLUDES 0" if (ls.ci_low > 0 or ls.ci_high < 0) else "INCLUDES 0"
-        print(f"  vs {canon_strategy:<25}: mean_delta={ls.mean_delta:+.4f}, CI=[{ls.ci_low:+.4f}, {ls.ci_high:+.4f}], p={ls.p_value_two_sided:.4f}  [{excl}]")
+        verdict = categorize_verdict(ls.ci_low, ls.ci_high, ls.p_value_two_sided)
+        print("  vs " + canon_strategy.ljust(25) + ": mean_delta=" + format(ls.mean_delta, "+.4f") +
+              ", CI[" + format(ls.ci_low, "+.4f") + ", " + format(ls.ci_high, "+.4f") + "], " +
+              "p_one=" + format(ls.p_value_one_sided, ".4f") + ", p_two=" + format(ls.p_value_two_sided, ".4f") +
+              "  [" + verdict + "]")
 
 
 if __name__ == "__main__":

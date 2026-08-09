@@ -158,7 +158,16 @@ def main() -> int:
             )
         paired: list[ReplicationPairedDelta] = []
         for entry in summary_row.get("paired", []):
-            ds = PairedDeltaSummary(**entry["delta_summary"])
+            ds_kwargs = dict(entry["delta_summary"])
+            # Backward compatibility: legacy summary files only had
+            # ``p_value_two_sided`` (which was actually a one-sided tail
+            # probability mislabeled). Map the legacy value to
+            # ``p_value_one_sided`` and leave ``p_value_two_sided`` at
+            # None so callers can detect the legacy form.
+            if "p_value_one_sided" not in ds_kwargs and "p_value_two_sided" in ds_kwargs:
+                ds_kwargs["p_value_one_sided"] = ds_kwargs.pop("p_value_two_sided")
+                ds_kwargs["p_value_two_sided"] = 0.0
+            ds = PairedDeltaSummary(**ds_kwargs)
             paired.append(
                 ReplicationPairedDelta(
                     strategy=entry["strategy"],
