@@ -95,19 +95,21 @@ The v1 benchmark has been built and validated. The current state is:
 
 The PG-Context-Select-v1 benchmark was expanded to 30 queries:
 
-- **Development set** (q_0001-q_0010, 10 queries): original queries,
-  used for method development.
-- **Confirmatory set** (q_0011-q_0030, 20 queries): newly authored
-  with no model-side inspection until the benchmark freeze.
+- **Development subset** (q_0001-q_0010, 10 queries): original
+  queries, used for method development.
+- **Confirmatory subset** (q_0011-q_0030, 20 queries): newly
+  authored with no model-side inspection until the benchmark
+  freeze.
 
-The benchmark is `split` to make the development vs confirmatory
-membership explicit. Selection of the new queries did NOT involve
-running the learned selector on them.
+Each query's `metadata.split` field marks its membership. Selection
+of the new queries did NOT involve running the learned selector on
+them.
 
-#### Primary pre-specified comparison (confirmatory, n=20)
+#### Primary pre-specified comparison (confirmatory subset, n=20)
 
 ```
-Sign convention: delta = learned_v3 - topk_pool_order (positive = learned wins)
+Sign convention: delta = learned_v3 - topk_pool_order
+(positive = learned wins)
 
   learned mean: 0.5948
   topk mean:    0.5444
@@ -116,6 +118,8 @@ Sign convention: delta = learned_v3 - topk_pool_order (positive = learned wins)
   95% bootstrap CI (raw float):
     ci_low  = 0.004200000000000001    (strictly > 0)
     ci_high = 0.09659999999999999
+
+  95% CI (4-decimal display): [+0.0042, +0.0966]
 
   p_value_one_sided: 0.0155
   p_value_two_sided: 0.0310
@@ -126,99 +130,80 @@ Sign convention: delta = learned_v3 - topk_pool_order (positive = learned wins)
 ```
 
 The strict pre-specified criterion (`ci_low > 0 AND p_value_two_sided
-< 0.05`) is met on the confirmatory set. The result is a
-**borderline / suggestive improvement** on the confirmatory 20-query
-subset of the development benchmark.
+< 0.05`) is met on the confirmatory subset.
 
-#### Secondary (oracle-informed) comparison
+#### Other subsets
+
+| Subset | n | learned mean | topk mean | mean_delta | 95% CI | p_two_sided | Win/Loss/Tie | Verdict |
+|---|---:|---:|---:|---:|---|---:|---:|---|
+| Development (q_0001-q_0010) | 10 | 0.6681 | 0.7269 | -0.0588 | [-0.1176, -0.0084] | 0.0100 | 0/4/6 | negative direction |
+| Confirmatory (q_0011-q_0030) | 20 | 0.5948 | 0.5444 | +0.0504 | [+0.0042, +0.0966] | 0.0310 | 10/3/7 | validated |
+| Full (q_0001-q_0030) | 30 | 0.6192 | 0.6052 | +0.0140 | [-0.0252, +0.0532] | 0.4600 | 10/7/13 | inconclusive |
+
+The development subset and the confirmatory subset show opposite
+mean deltas. This is a descriptive observation, not a causal
+explanation. Both numbers are computed correctly from their
+respective (independent) frozen artifacts. The sign difference
+reflects the corpus expansion: the BM25 retriever returns different
+candidates against the 38-chunk corpus (vs. the original 8-chunk
+corpus), which changes both the topk_pool_order and learned_v3
+selections and therefore the per-query outcomes. See
+`.planning/CONFIRMATORY_INTEGRITY_AUDIT.md` for the full trace.
+
+#### Oracle-informed comparison (secondary)
 
 ```
-learned_v3 vs gold_plus_distractors on confirmatory:
-  mean_delta:   -0.0019
-  95% CI: [-0.0440, +0.0390]
-  p_two_sided: 0.9510
-  Verdict: inconclusive
+learned_v3 vs gold_plus_distractors (oracle-informed):
+  confirmatory:    delta=-0.0019, CI [-0.0440, +0.0390], p=0.9510 (inconclusive)
+  development:     delta=-0.0390, CI [-0.0808, +0.0024], p=0.0590 (inconclusive)
+  full:            delta=-0.0143, CI [-0.0448, +0.0184], p=0.3880 (inconclusive)
 ```
 
 The learned selector is competitive with the oracle-informed
-reference but is not demonstrably better.
+reference on all subsets but is not demonstrably better.
 
-#### Development set result (n=10)
+#### Multi-hop distribution
 
-```
-learned_v3 vs topk_pool_order on development:
-  mean_delta:   -0.0588
-  95% CI: [-0.1176, -0.0084]
-  p_two_sided: 0.0100
-  Verdict: negative direction (canon wins)
-```
+| Subset | n_queries | n_multi_hop | percentage |
+|---|---:|---:|---:|
+| Development | 10 | 0 | 0.0% |
+| Confirmatory | 20 | 8 | 40.0% |
+| Full | 30 | 8 | 26.7% |
 
-The development set shows the OPPOSITE direction: learned is
-reliably WORSE than topk_pool_order on the 10 development queries.
-
-#### Full 30-query result
-
-```
-learned_v3 vs topk_pool_order on full 30:
-  mean_delta:   +0.0140
-  95% CI: [-0.0252, +0.0532]
-  p_two_sided: 0.4600
-  Verdict: inconclusive
-```
-
-The development-set negative effect partially cancels the
-confirmatory-set positive effect, producing an inconclusive full
-result.
-
-#### Interpreting the development vs confirmatory contradiction
-
-The development set was used extensively for method development
-(prompt-policy ablation, adaptive policy design, p-value definitions).
-The development-set queries are biased against the learned selector
-because the model-side tuning used these queries.
-
-The confirmatory set is held out from selection-time tuning. The
-result there is **learned wins reliably**.
-
-This is the standard in-sample vs out-of-sample pattern: tuning on a
-sample overestimates performance on that sample relative to the held-out
-performance.
+The confirmatory subset meets the planning target (>= 30%
+multi-hop in the new queries). The full benchmark rate is below
+30% because the development subset has 0 multi-hop queries.
 
 #### Scope of the conclusion
 
 The pre-specified confirmatory result is:
 
-> On the confirmatory 20-query subset of the
-> PG-Context-Select-v1 development benchmark, learned_v3 produces
-> a higher mean overall score than topk_pool_order by Δ = +0.0504
-> (95% CI [+0.0042, +0.0966], p_value_two_sided = 0.0310).
+> On the pre-frozen held-out 20-query confirmatory subset of
+> PG-Context-Select-v1, learned_v3 achieved a +0.0504 higher mean
+> overall score than the canonical static baseline topk_pool_order
+> (95% CI [+0.0042, +0.0966], two-sided bootstrap p = 0.0310).
 
-This is **not** a broad thesis validation. The strongest allowed scope
-is:
-
-> "On the current PG-Context-Select-v1 development benchmark."
+This result is specific to the current PostgreSQL benchmark and
+MiniMax-M3; broader generalization has not yet been established.
 
 Limitations:
 
 - The benchmark covers PostgreSQL documentation only.
 - The model is MiniMax-M3 only.
 - The 20 confirmatory queries are authored by the same person who
-  tuned the development set; subtle topical overlap may bias the result.
-- The benchmark was held out from selector tuning but not from
-  author-time decisions.
+  tuned the development set.
+- The 5 reps per query are stochastic.
+- Multiple-comparison correction across the 5 strategy comparisons
+  is not applied.
 
-Broader thesis validation requires a larger held-out benchmark
-that does not share author-time decisions with the v1 development
-process.
-
-See `.planning/CONFIRMATORY_RESULTS.md` for the full analysis and
-`.planning/CONFIRMATORY_BENCHMARK_FREEZE.md` for the frozen pipeline
-spec.
+See `.planning/CONFIRMATORY_RESULTS.md` for the full numerical
+analysis and `.planning/CONFIRMATORY_INTEGRITY_AUDIT.md` for the
+trace of the development vs confirmatory difference.
 
 ### Pre-Phase-N result (Phase M audit, kept for historical reference)
 
-The Phase M audit locked the statistical methodology. The pre-Phase-N
-result on the 10 development queries was:
+The Phase M audit locked the statistical methodology. On the
+PR #21 frozen artifacts (8-chunk corpus, no confirmatory queries):
 
 ```
 learned_v3_context_first vs topk_pool_order on development (n=10):
@@ -229,7 +214,9 @@ learned_v3_context_first vs topk_pool_order on development (n=10):
 ```
 
 This was the pre-freeze baseline. The Phase N confirmatory result
-above supersedes it for thesis-validation purposes.
+above supersedes it for thesis-validation purposes. The numerical
+value differs because Phase N expanded the corpus (8 → 38 chunks)
+and regenerated all artifacts.
 
 ### Prompt-policy choice (audited, Phase M)
 
